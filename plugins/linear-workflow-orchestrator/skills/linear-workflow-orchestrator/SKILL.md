@@ -17,6 +17,8 @@ $linear-workflow-orchestrator <development goal> [goal mode: on|off]
 
 If goal mode is on, keep checking whether more development work remains after the current workflow is complete. When the product is not finished, create the next `workflow.md` slice and continue with the same Linear/status process.
 
+Goal mode bypass: when goal mode is on and the user has granted GitHub/Linear authority, proceed autonomously through Linear registration, Todo/In Progress execution, workpad updates, review, rework, PR creation, and merge-readiness checks without asking "continue?" between routine steps. Ask only for missing credentials, destructive actions outside the granted authority, irreversible production effects, or materially new scope.
+
 ## Startup Questions
 
 Hard gate: ask these three questions before repository inspection, creating `workflow.md`, running `git`, running implementation commands, or doing external writes. Do not infer or auto-select the answers from the current directory, environment, or perceived user intent. If the user supplied one answer inline, ask only for the missing answers.
@@ -53,10 +55,12 @@ Confirm these before doing external writes:
 - Linear authority: whether Codex may create or update Linear issues.
 - Linear credentials when Linear writes are requested:
   - `LINEAR_API_KEY`
-  - `LINEAR_TEAM_ID`
-  - `LINEAR_PROJECT_URL` or a project UUID if available
+  - `LINEAR_TEAM_ID` when available; otherwise the helper can resolve the first visible team from the API key
+  - `LINEAR_PROJECT_URL` or a project UUID when available; otherwise the helper can create a Linear project for the workflow during `sync-linear --apply`
 
 If values are already present in the environment, use them. Do not print secrets.
+
+If only `LINEAR_API_KEY` is present and Linear writes are authorized, do not stop for `LINEAR_TEAM_ID` or `LINEAR_PROJECT_URL`. Run `sync-linear --apply`; it resolves the first visible team and creates a workflow project when no project URL is provided. Stop only if the API key cannot see any teams or project creation fails.
 
 ## Default Status Model
 
@@ -172,6 +176,7 @@ node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.m
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs init "Build a Codex plugin" --goal-mode on --max-concurrent-agents 10 --max-turns 20 --out workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs preflight
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs record-preflight workflow.md --workspace github --credentials exported --goal-mode on
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs resolve-linear workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs parse workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs sync-linear workflow.md --dry-run-out linear-issues.preview.json
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs ready workflow.md

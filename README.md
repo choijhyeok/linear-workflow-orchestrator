@@ -54,6 +54,8 @@ node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.m
 
 Generated workflows include Symphony-style front matter for `tracker`, `workspace`, `hooks`, `agent`, and `codex`. `agent.max_concurrent_agents` limits how many ready parallel issues `wave` selects, and `agent.max_turns` is surfaced as the per-issue lane budget in the dashboard/workflow policy.
 
+In goal mode, the skill bypasses routine continuation prompts after startup authority is recorded. With `LINEAR_API_KEY` alone, `sync-linear --apply` can resolve the first visible Linear team and create a workflow project when no `LINEAR_PROJECT_URL` is provided.
+
 ## Status Line
 
 The plugin includes a Node.js status-line emitter so Codex or OMX can show the current Linear workflow task under the terminal composer:

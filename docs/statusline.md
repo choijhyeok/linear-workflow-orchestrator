@@ -58,7 +58,17 @@ Direct wrapper check:
 ~/.codex/bin/linear-workflow-orchestrator-statusline
 ```
 
-Codex plugin installation also discovers skills and plugin files. Native TUI status-line rendering remains host-dependent, and current Codex TUI builds do not execute arbitrary plugin dashboard commands below the composer. If nothing renders under the prompt, run the dashboard wrapper in a terminal split or OMX HUD pane.
+Codex plugin installation also discovers skills and plugin files. Native TUI status-line rendering remains host-dependent, and current Codex TUI builds do not execute arbitrary plugin dashboard commands below the composer. If nothing renders under the prompt, run the dashboard wrapper in a terminal split or OMX HUD pane:
+
+```bash
+~/.codex/bin/linear-workflow-orchestrator-dashboard --watch
+```
+
+For a single operator terminal that both refreshes the dashboard and polls Linear, use:
+
+```bash
+~/.codex/bin/linear-workflow-orchestrator-run
+```
 
 For future Codex builds that support a command-backed status line, point the host at:
 

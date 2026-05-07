@@ -161,13 +161,16 @@ node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.m
 
 12. For Symphony-style concurrent work:
    - prefer the unattended poller for goal mode execution:
+     - `run WORKFLOW.md` shows the dashboard and runs the Linear poller loop in one terminal
      - `poll WORKFLOW.md` runs one dispatch tick
      - `daemon WORKFLOW.md` keeps polling Linear on `polling.interval_ms`
    - the poller reads Linear issues from `tracker.project_slug`; the local `workflow.md` table is not the source of execution truth in this mode
    - the poller claims `Todo` issues by moving them to `In Progress`, creates/reuses `workspace.root/<issue-id>`, updates the Linear `## Codex Workpad`, and executes `codex.command` inside that workspace
    - read `agent.max_concurrent_agents` from `workflow.md` before dispatch
+   - dispatch up to `agent.max_concurrent_agents` lanes concurrently
    - assign each ready parallel issue to a separate Codex session/subagent/worktree, but never exceed `agent.max_concurrent_agents`
-   - treat `agent.max_turns` as the per-issue Codex lane turn budget; if the lane reaches it before completion, update the workpad with a blocker/handoff rather than silently continuing
+   - pass `agent.max_turns` to the lane command through `SYMPHONY_MAX_TURNS` and `LWO_MAX_TURNS`; if the lane reaches it before completion, update the workpad with a blocker/handoff rather than silently continuing
+   - set `codex.command: codex app-server` when the user wants the lane runner to be `codex app-server`
    - each Codex lane owns exactly one Linear issue and its branch/worktree
    - each lane updates only its own Linear `## Codex Workpad`
    - no lane may edit another lane's owned files unless the orchestrator updates the workflow
@@ -196,6 +199,9 @@ node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.m
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs ready workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs wave workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs dashboard workflow.md
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs dashboard WORKFLOW.md --watch
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs run WORKFLOW.md
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs tui WORKFLOW.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs poll WORKFLOW.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs daemon WORKFLOW.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs select-issue workflow.md LWO-004
@@ -225,7 +231,7 @@ Example:
 Linear In Progress: LWO-004 Execute independent implementation lanes · ABC-123
 ```
 
-The command reads `workflow.md` and chooses the most active issue in this priority order: In Progress, Rework, Review, Merging, Todo, Backlog. Plugin installation exposes this command, while actual native TUI status-line registration remains owned by the host Codex/OMX setup. Current Codex TUI builds do not run arbitrary plugin dashboard commands below the composer, so use the installed dashboard wrapper in a terminal split or OMX HUD pane until the host exposes command-backed HUD panels.
+The command reads `workflow.md` and chooses the most active issue in this priority order: In Progress, Rework, Review, Merging, Todo, Backlog. Plugin installation exposes this command, while actual native TUI status-line registration remains owned by the host Codex/OMX setup. Current Codex TUI builds do not run arbitrary plugin dashboard commands below the composer, so use the installed dashboard wrapper with `--watch`, or the installed runner wrapper, in a terminal split or OMX HUD pane until the host exposes command-backed HUD panels.
 
 Use `--hyperlink` with `--linear-base-url` or `LINEAR_PROJECT_URL` when the host status line preserves OSC 8 terminal hyperlinks. This lets the visible Linear issue identifier open the corresponding Linear issue page.
 

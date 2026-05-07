@@ -55,11 +55,14 @@ It also installs:
 
 ```text
 ~/.codex/bin/linear-workflow-orchestrator-statusline
+~/.codex/bin/linear-workflow-orchestrator-dashboard
+~/.codex/bin/linear-workflow-orchestrator-run
+~/.codex/bin/linear-workflow-orchestrator-tui
 ```
 
-and registers plugin metadata in `~/.codex/config.toml`/`config.json` for command-backed Codex or OMX HUD hosts. The wrapper reads `workflow.md` from the current directory and uses `LINEAR_PROJECT_URL` or `LINEAR_WORKSPACE_URL` for clickable Linear issue links.
+and registers plugin metadata in `~/.codex/config.toml`/`config.json` for command-backed Codex or OMX HUD hosts. The status-line wrapper reads `workflow.md` from the current directory and uses `LINEAR_PROJECT_URL` or `LINEAR_WORKSPACE_URL` for clickable Linear issue links.
 
-Current Codex TUI builds do not execute arbitrary plugin HUD commands below the composer. If nothing appears under the prompt after install, that is a host limitation, not a failed plugin install. Use `~/.codex/bin/linear-workflow-orchestrator-dashboard` in a terminal split or OMX HUD pane until the host supports command-backed dashboard panels.
+Current Codex TUI builds do not execute arbitrary plugin HUD commands below the composer. If nothing appears under the prompt after install, that is a host limitation, not a failed plugin install. In a separate terminal this is just a normal terminal TUI: use `~/.codex/bin/linear-workflow-orchestrator-tui` for the combined dashboard + Linear poller loop, or `~/.codex/bin/linear-workflow-orchestrator-dashboard --watch` for an auto-refreshing dashboard without polling.
 
 ## Runtime
 
@@ -75,7 +78,7 @@ For goal-mode automation from a shell, use the `goal` helper:
 LINEAR_API_KEY=... node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs goal "Build bookmark CLI" --apply --poll
 ```
 
-This creates `WORKFLOW.md`, records goal mode, creates or resolves the Linear project, registers backlog issues, promotes ready work to Todo, and runs one Linear poll tick. Start `daemon WORKFLOW.md` when you want the continuous Linear-driven runner.
+This creates `WORKFLOW.md`, records goal mode, creates or resolves the Linear project, registers backlog issues, promotes ready work to Todo, and runs one Linear poll tick. Start `tui WORKFLOW.md` when you want the continuous dashboard + Linear-driven terminal TUI, or `daemon WORKFLOW.md` when you only want JSON polling output.
 
 Generated `workflow.md` files include Symphony-style front matter:
 
@@ -97,7 +100,7 @@ When goal mode is on, the skill should bypass routine "continue?" prompts after 
 
 For Linear setup, `LINEAR_API_KEY` is enough for `sync-linear --apply` in the common case. If `LINEAR_TEAM_ID` is missing, the helper uses the first team visible to the API key. If `LINEAR_PROJECT_URL` is missing, the helper creates a Linear project for the workflow and uses that project id/url for issue registration.
 
-For Symphony-style unattended execution, run `poll WORKFLOW.md` for one dispatch tick or `daemon WORKFLOW.md` for a continuous loop. The poller reads Linear issues from `tracker.project_slug`, moves eligible Todo issues to In Progress, prepares `workspace.root/<issue>`, runs configured hooks, updates the single `## Codex Workpad`, and executes `codex.command` in that issue workspace. This is the mode to use when Linear should drive development instead of acting as a passive mirror.
+For Symphony-style unattended execution, run `tui WORKFLOW.md` for the combined dashboard + polling terminal TUI, `poll WORKFLOW.md` for one dispatch tick, or `daemon WORKFLOW.md` for a JSON continuous loop. The poller reads Linear issues from `tracker.project_slug`, moves eligible Todo issues to In Progress, prepares `workspace.root/<issue>`, runs configured hooks, updates the single `## Codex Workpad`, and executes `codex.command` in that issue workspace. It dispatches up to `agent.max_concurrent_agents` issues concurrently and exposes `agent.max_turns` to the lane command as `SYMPHONY_MAX_TURNS`/`LWO_MAX_TURNS`. Set `codex.command: codex app-server` in `WORKFLOW.md` if that is the Codex lane runner you want. This is the mode to use when Linear should drive development instead of acting as a passive mirror.
 
 At the start of a workflow, the skill should ask:
 

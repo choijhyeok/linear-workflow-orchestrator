@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 
 export const DEFAULT_STATUSES = [
   ["Backlog", "All discovered work before it is selected for execution."],
@@ -293,28 +293,41 @@ function pad(value, width) {
 
 export function formatDashboard(issues, options = {}) {
   const active = issues.filter((issue) => ACTIVE_EXECUTION_STATUSES.has(issue.status.toLowerCase()));
+  const running = issues.filter((issue) => !TERMINAL_STATUSES.has(issue.status.toLowerCase()));
   const maxAgents = Number(options.maxConcurrentAgents ?? issues.length);
   const maxTurns = Number(options.maxTurns ?? 20);
   const project = options.projectUrl ?? process.env.LINEAR_PROJECT_URL ?? "n/a";
   const nextRefresh = options.nextRefresh ?? "manual";
+  const runtime = options.runtime ?? "n/a";
+  const throughput = options.throughput ?? "n/a";
   const rows = [
-    "SYMPHONY-LITE STATUS",
+    "┌ SYMPHONY STATUS",
     `Agents: ${active.length}/${maxAgents}`,
+    `Throughput: ${throughput}`,
+    `Runtime: ${runtime}`,
+    "Tokens: in n/a | out n/a | total n/a",
+    "Rate Limits: codex | primary n/a | secondary n/a | credits n/a",
     `Max turns: ${maxTurns}`,
     `Project: ${project}`,
     `Next refresh: ${nextRefresh}`,
+    "├─ Running",
     "",
-    "Running",
-    "",
-    `${pad("ID", 10)} ${pad("STAGE", 12)} ${pad("LINEAR", 12)} ${pad("BRANCH/WORKTREE", 28)} TITLE`,
-    `${"-".repeat(10)} ${"-".repeat(12)} ${"-".repeat(12)} ${"-".repeat(28)} ${"-".repeat(40)}`,
+    `  ${pad("ID", 10)} ${pad("STAGE", 12)} ${pad("PID", 8)} ${pad("AGE / TURN", 12)} ${pad("TOKENS", 10)} ${pad("SESSION", 12)} EVENT`,
+    `  ${"-".repeat(10)} ${"-".repeat(12)} ${"-".repeat(8)} ${"-".repeat(12)} ${"-".repeat(10)} ${"-".repeat(12)} ${"-".repeat(40)}`,
   ];
-  for (const issue of issues.filter((item) => !TERMINAL_STATUSES.has(item.status.toLowerCase()))) {
-    rows.push(`${pad(issue.key, 10)} ${pad(issue.status, 12)} ${pad(issue.linearIssue || "-", 12)} ${pad(issue.branch || "-", 28)} ${issue.title}`);
+  for (const issue of running) {
+    const id = issue.linearIssue || issue.key;
+    const branch = issue.branch ? ` · ${issue.branch}` : "";
+    rows.push(`• ${pad(id, 10)} ${pad(issue.status, 12)} ${pad(issue.pid || "-", 8)} ${pad(issue.turn ? `- / ${issue.turn}` : "- / -", 12)} ${pad(issue.tokens || "-", 10)} ${pad(issue.session || "-", 12)} ${issue.title}${branch}`);
   }
   const blocked = issues.filter((issue) => issue.status.toLowerCase() === "backlog" && issue.dependsOn.length);
-  rows.push("", "Backoff queue", "");
-  rows.push(blocked.length ? `${blocked.length} waiting on dependencies` : "No queued retries");
+  rows.push("", "├─ Backoff queue", "");
+  if (blocked.length) {
+    for (const issue of blocked) rows.push(`  ${issue.key} waiting on ${issue.dependsOn.join(", ")}`);
+  } else {
+    rows.push("  No queued retries");
+  }
+  rows.push("└");
   return rows.join("\n");
 }
 
@@ -887,18 +900,26 @@ function runHook(script, cwd, env) {
   return { ok: true };
 }
 
-function runAgentCommand(command, cwd, prompt, env, options = {}) {
+async function runAgentCommand(command, cwd, prompt, env, options = {}) {
   if (options.dryRunAgent) return { skipped: true, command };
-  execFileSync("sh", ["-lc", command], {
-    cwd,
-    stdio: "inherit",
-    env: {
-      ...env,
-      SYMPHONY_ISSUE_PROMPT: prompt,
-      LWO_ISSUE_PROMPT: prompt,
-    },
+  return await new Promise((resolve, reject) => {
+    const child = spawn("sh", ["-lc", command], {
+      cwd,
+      stdio: "inherit",
+      env: {
+        ...env,
+        SYMPHONY_ISSUE_PROMPT: prompt,
+        LWO_ISSUE_PROMPT: prompt,
+        SYMPHONY_MAX_TURNS: String(options.maxTurns ?? ""),
+        LWO_MAX_TURNS: String(options.maxTurns ?? ""),
+      },
+    });
+    child.on("error", reject);
+    child.on("close", (code, signal) => {
+      if (code === 0) resolve({ ok: true, command, pid: child.pid });
+      else reject(new Error(`agent command exited with ${signal ?? code}: ${command}`));
+    });
   });
-  return { ok: true, command };
 }
 
 export async function dispatchLinearIssue(apiKey, workflowMarkdown, issue, options = {}) {
@@ -926,7 +947,10 @@ export async function dispatchLinearIssue(apiKey, workflowMarkdown, issue, optio
   const env = { ...process.env, LINEAR_API_KEY: apiKey, SYMPHONY_ISSUE_ID: activeIssue.id, SYMPHONY_ISSUE_IDENTIFIER: activeIssue.identifier };
   if (!options.skipHooks) runHook(config.hooks.before_run, workspace.path, env);
   const prompt = renderIssuePrompt(workflowPromptTemplate(workflowMarkdown), activeIssue, options.attempt ?? null);
-  result.agent = runAgentCommand(config.codex.command, workspace.path, prompt, env, { dryRunAgent: options.dryRunAgent });
+  result.agent = await runAgentCommand(config.codex.command, workspace.path, prompt, env, {
+    dryRunAgent: options.dryRunAgent,
+    maxTurns: config.agent.max_turns,
+  });
   if (!options.skipHooks) runHook(config.hooks.after_run, workspace.path, env);
   return result;
 }
@@ -938,15 +962,33 @@ export async function pollLinearOnce(workflowPath, options = {}) {
   const candidates = await fetchLinearCandidateIssues(apiKey, config);
   const maxAgents = Number(options["max-concurrent-agents"] ?? config.agent.max_concurrent_agents);
   const selected = candidates.slice(0, Math.max(0, maxAgents));
-  const results = [];
-  for (const issue of selected) {
-    results.push(await dispatchLinearIssue(apiKey, workflowMarkdown, issue, {
+  const results = await Promise.all(selected.map((issue) => dispatchLinearIssue(apiKey, workflowMarkdown, issue, {
       workflowDir: path.dirname(path.resolve(workflowPath)),
       dryRunAgent: options["dry-run-agent"],
       skipHooks: options["skip-hooks"],
-    }));
-  }
+    })));
   return { candidates: candidates.length, dispatched: results.length, results };
+}
+
+function dashboardSnapshot(workflow, options = {}) {
+  if (!fs.existsSync(workflow)) return options.empty ?? "No workflow.md";
+  const workflowMarkdown = fs.readFileSync(workflow, "utf8");
+  const config = parseWorkflowConfig(workflowMarkdown);
+  return formatDashboard(parseWorkflow(workflowMarkdown), {
+    maxConcurrentAgents: options["max-concurrent-agents"] ?? config.agent.max_concurrent_agents,
+    maxTurns: options["max-turns"] ?? config.agent.max_turns,
+    projectUrl: options["project-url"],
+    nextRefresh: options["next-refresh"],
+  });
+}
+
+function clearDashboardScreen(options = {}) {
+  if (options["no-clear"]) return;
+  process.stdout.write("\x1Bc");
+}
+
+async function sleep(ms) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function promoteReadyIssuesToTodo(workflowPath, options = {}) {
@@ -1032,7 +1074,7 @@ function parseOptions(args) {
       continue;
     }
     const key = arg.slice(2);
-    if (["apply", "apply-linear", "checkout", "local-only", "hyperlink", "once", "dry-run-agent", "skip-hooks", "poll", "daemon"].includes(key)) {
+    if (["apply", "apply-linear", "checkout", "local-only", "hyperlink", "once", "dry-run-agent", "skip-hooks", "poll", "daemon", "watch", "no-clear"].includes(key)) {
       values[key] = true;
     } else {
       values[key] = args[index + 1];
@@ -1315,17 +1357,31 @@ export async function run(argv) {
   }
   if (command === "dashboard") {
     const workflow = options._[0] ?? "workflow.md";
-    if (!fs.existsSync(workflow)) {
-      console.log(options.empty ?? "No workflow.md");
-      return;
+    while (true) {
+      if (options.watch) clearDashboardScreen(options);
+      console.log(dashboardSnapshot(workflow, options));
+      if (!options.watch || options.once) return;
+      const interval = Number(options["interval-ms"] ?? 2000);
+      await sleep(interval);
     }
-    console.log(formatDashboard(parseWorkflow(fs.readFileSync(workflow, "utf8")), {
-      maxConcurrentAgents: options["max-concurrent-agents"] ?? parseWorkflowConfig(fs.readFileSync(workflow, "utf8")).agent.max_concurrent_agents,
-      maxTurns: options["max-turns"] ?? parseWorkflowConfig(fs.readFileSync(workflow, "utf8")).agent.max_turns,
-      projectUrl: options["project-url"],
-      nextRefresh: options["next-refresh"],
-    }));
-    return;
+  }
+  if (command === "run" || command === "tui") {
+    const workflow = options._[0] ?? "WORKFLOW.md";
+    while (true) {
+      clearDashboardScreen(options);
+      console.log(dashboardSnapshot(workflow, options));
+      const startedAt = new Date().toISOString();
+      try {
+        const result = await pollLinearOnce(workflow, options);
+        console.log(JSON.stringify({ startedAt, ...result }, null, 2));
+      } catch (error) {
+        console.error(JSON.stringify({ startedAt, error: error.message }));
+      }
+      if (options.once) return;
+      const config = fs.existsSync(workflow) ? parseWorkflowConfig(fs.readFileSync(workflow, "utf8")) : { polling: {} };
+      const interval = Number(options["interval-ms"] ?? config.polling.interval_ms ?? 30000);
+      await sleep(interval);
+    }
   }
   if (command === "poll") {
     const workflow = options._[0] ?? "WORKFLOW.md";
@@ -1345,7 +1401,7 @@ export async function run(argv) {
       if (options.once) return;
       const config = parseWorkflowConfig(fs.readFileSync(workflow, "utf8"));
       const interval = Number(options["interval-ms"] ?? config.polling.interval_ms ?? 30000);
-      await new Promise((resolve) => setTimeout(resolve, interval));
+      await sleep(interval);
     }
   }
   if (command === "set-status") {

@@ -14,6 +14,7 @@ const statuslineWrapperPath = path.join(installedBinRoot, "linear-workflow-orche
 const dashboardWrapperPath = path.join(installedBinRoot, "linear-workflow-orchestrator-dashboard");
 const runWrapperPath = path.join(installedBinRoot, "linear-workflow-orchestrator-run");
 const tuiWrapperPath = path.join(installedBinRoot, "linear-workflow-orchestrator-tui");
+const openTuiWrapperPath = path.join(installedBinRoot, "linear-workflow-orchestrator-open-tui");
 const helperPath = path.join(pluginRoot, "scripts", "linear-workflow-orchestrator.mjs");
 const configPath = path.join(os.homedir(), ".codex", "config.json");
 const tomlPath = path.join(os.homedir(), ".codex", "config.toml");
@@ -77,6 +78,11 @@ config.statusLineCommands = {
     description: "Open the terminal operator TUI for WORKFLOW.md.",
     source: plugin.name,
   },
+  "linear-workflow-orchestrator-open-tui": {
+    command: openTuiWrapperPath,
+    description: "Launch the terminal operator TUI for WORKFLOW.md in a new terminal window.",
+    source: plugin.name,
+  },
 };
 
 fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
@@ -134,6 +140,17 @@ const tuiWrapper = [
 ].join("\n");
 fs.writeFileSync(tuiWrapperPath, tuiWrapper, { mode: 0o755 });
 fs.chmodSync(tuiWrapperPath, 0o755);
+const openTuiWrapper = [
+  "#!/bin/sh",
+  "set -eu",
+  'if [ "$#" -eq 0 ]; then',
+  "  set -- WORKFLOW.md",
+  "fi",
+  `exec node "${helperPath.replace(/"/g, '\\"')}" open-tui "$@"`,
+  "",
+].join("\n");
+fs.writeFileSync(openTuiWrapperPath, openTuiWrapper, { mode: 0o755 });
+fs.chmodSync(openTuiWrapperPath, 0o755);
 
 function upsertTomlSkillDirectory(filePath, directory) {
   const escaped = directory.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -218,6 +235,7 @@ console.log(`Installed statusline command: ${statuslineWrapperPath}`);
 console.log(`Installed dashboard command: ${dashboardWrapperPath}`);
 console.log(`Installed runner command: ${runWrapperPath}`);
 console.log(`Installed TUI command: ${tuiWrapperPath}`);
+console.log(`Installed open TUI command: ${openTuiWrapperPath}`);
 console.log(`Wrote ${configPath}`);
 console.log(`Updated ${tomlPath}`);
 console.log("Note: current Codex TUI builds do not execute arbitrary plugin HUD commands under the composer; use the dashboard wrapper in a side pane until the host supports it.");

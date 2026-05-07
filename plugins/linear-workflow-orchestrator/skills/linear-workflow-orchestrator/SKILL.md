@@ -103,6 +103,16 @@ node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.m
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs sync-linear workflow.md --dry-run-out linear-issues.preview.json
 ```
 
+After a dry-run or failed Linear apply, do not continue as though Linear orchestration is complete. The final response for that turn must explicitly hand off the next Linear action and ask whether to run Linear registration now. Use this Korean shape:
+
+```text
+workflow.md와 linear-issues.preview.json까지 준비했습니다. 이 상태는 아직 Linear backlog 등록 전입니다.
+
+Linear API 정보를 현재 세션에 export하거나 env 파일 경로를 주면, 다음 단계로 실제 Linear issue 등록을 실행할까요?
+```
+
+If the user already supplied credentials in the conversation but they are not visible in the shell, say that the current Codex shell cannot see them and ask whether to use direct env values or an env file for the next `sync-linear --apply` step. Do not mark Linear-backed issues Done or present the workflow as fully complete while `Linear Issue` cells are empty.
+
 7. After Linear backlog registration, do not implement directly on `main`.
 8. Use the issue dependency graph:
    - run `ready` to identify Backlog/Todo issues whose dependencies are Done

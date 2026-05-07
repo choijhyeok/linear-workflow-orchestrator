@@ -208,6 +208,9 @@ test("skill requires startup questions before repository work", () => {
   assert.match(skill, /Hard gate: ask these four questions before repository inspection/);
   assert.match(skill, /Do not infer or auto-select the answers/);
   assert.match(skill, /first assistant response for a new `\$linear-workflow-orchestrator` request must be only the startup-question prompt/);
+  assert.match(skill, /Required Korean prompt shape/);
+  assert.match(skill, /4\. agent limit: max_concurrent_agents와 max_turns를 몇으로 할까요\?/);
+  assert.match(skill, /Do not omit question 4/);
 });
 
 test("record-preflight stores startup agent limits", async () => {
@@ -511,6 +514,18 @@ test("dashboard summarizes active workflow issues", () => {
   assert.match(dashboard, /HOW-2\s+In Progress/);
 });
 
+test("dashboard renders compact agent events instead of full command output", () => {
+  const workflow = updateWorkflowStatus(buildWorkflow("Build bookmark CLI", true), "LWO-001", "In Progress", "HOW-1");
+  const dashboard = formatDashboard(parseWorkflow(workflow), {
+    maxConcurrentAgents: 3,
+    events: [{ id: "HOW-1", pid: 1234, event: "completed: npm test passed" }],
+  });
+
+  assert.match(dashboard, /HOW-1\s+In Progress\s+1234/);
+  assert.match(dashboard, /completed: npm test passed/);
+  assert.doesNotMatch(dashboard, /OpenAI Codex v/);
+});
+
 test("dashboard watch can render a single snapshot", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "lwo-dashboard-watch-"));
   const workflowPath = join(tempDir, "WORKFLOW.md");
@@ -582,7 +597,7 @@ test("run and tui commands render dashboard and perform one poll tick", async ()
 
   const output = lines.join("\n");
   assert.match(output, /SYMPHONY STATUS/);
-  assert.match(output, /"dispatched": 0/);
+  assert.doesNotMatch(output, /"dispatched": 0/);
 });
 
 test("run defaults to statusline when invoked without args", async () => {
@@ -784,7 +799,7 @@ test("poll dispatches Linear Todo issue into workspace without prompting", async
     "  max_concurrent_agents: 1",
     "  max_turns: 2",
     "codex:",
-    "  command: printf '%s' \"$SYMPHONY_ISSUE_PROMPT\" > agent-prompt.txt && echo \"$SYMPHONY_ISSUE_IDENTIFIER\" > agent-ran.txt",
+    "  command: printf '%s' \"$SYMPHONY_ISSUE_PROMPT\" > agent-prompt.txt && echo \"$SYMPHONY_ISSUE_IDENTIFIER\" > agent-ran.txt && echo 'OpenAI Codex v noisy output'",
     "---",
     "# Workflow: Build bookmark CLI",
     "",
@@ -871,6 +886,8 @@ test("poll dispatches Linear Todo issue into workspace without prompting", async
     assert.match(prompt, /exactly one Linear issue: HOW-1/);
     assert.match(prompt, /package metadata exists/);
     assert.doesNotMatch(prompt, /Implement add command/);
+    assert.match(readFileSync(result.results[0].agent.logPath, "utf8"), /OpenAI Codex v noisy output/);
+    assert.match(result.results[0].agent.event, /completed: OpenAI Codex v noisy output/);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalApiKey === undefined) delete process.env.LINEAR_API_KEY;

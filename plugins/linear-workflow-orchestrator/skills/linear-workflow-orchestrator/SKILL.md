@@ -39,7 +39,7 @@ Hard gate: ask these four questions before repository inspection, creating `work
 
 The first assistant response for a new `$linear-workflow-orchestrator` request must be only the startup-question prompt plus a short statement that no workflow work will start until those answers are recorded. Do not say that goal mode is off, Linear is local-only, or GitHub is unavailable unless the user explicitly answered that way.
 
-Suggested Korean prompt shape:
+Required Korean prompt shape:
 
 ```text
 시작 전에 4가지만 정하겠습니다.
@@ -48,7 +48,11 @@ Suggested Korean prompt shape:
 2. Linear 인증: 이미 export됨 / env 파일 경로 제공 / 지금 입력 중 무엇인가요?
 3. goal mode: on / off 중 무엇으로 할까요?
 4. agent limit: max_concurrent_agents와 max_turns를 몇으로 할까요? 예: 10 agents / 20 turns
+
+이 4가지 답이 기록되기 전에는 workflow 생성, repo 검사, git 명령, Linear 등록을 시작하지 않습니다.
 ```
+
+Do not omit question 4. If a response contains only three numbered startup questions, immediately correct it before doing any workflow work.
 
 ## Required User Inputs
 

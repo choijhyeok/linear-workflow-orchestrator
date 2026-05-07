@@ -208,6 +208,9 @@ test("skill requires startup questions before repository work", () => {
   assert.match(skill, /Hard gate: ask these four questions before repository inspection/);
   assert.match(skill, /Do not infer or auto-select the answers/);
   assert.match(skill, /first assistant response for a new `\$linear-workflow-orchestrator` request must be only the startup-question prompt/);
+  assert.match(skill, /Required Korean prompt shape/);
+  assert.match(skill, /4\. agent limit: max_concurrent_agents와 max_turns를 몇으로 할까요\?/);
+  assert.match(skill, /Do not omit question 4/);
 });
 
 test("record-preflight stores startup agent limits", async () => {

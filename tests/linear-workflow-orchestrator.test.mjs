@@ -13,6 +13,7 @@ import {
   formatDashboard,
   formatStatusLine,
   initialWorkpadBody,
+  issueScopedPrompt,
   linearIssueUrl,
   loadEnvFile,
   parseWorkflow,
@@ -94,6 +95,22 @@ test("workflow config preserves shell quotes inside unquoted command scalars", (
     config.codex.command,
     'codex exec --dangerously-bypass-approvals-and-sandbox "$SYMPHONY_ISSUE_PROMPT"',
   );
+});
+
+test("issue scoped prompts do not hand the whole workflow to lane agents", () => {
+  const workflow = buildWorkflow("Build bookmark CLI", true);
+  const prompt = issueScopedPrompt(workflow, {
+    identifier: "HOW-103",
+    title: "Scaffold bookmark CLI package and storage",
+    description: "Acceptance: package metadata and executable CLI entrypoint exist.",
+  });
+
+  assert.match(prompt, /exactly one Linear issue: HOW-103/);
+  assert.match(prompt, /Do not implement sibling Linear issues/);
+  assert.match(prompt, /package metadata and executable CLI entrypoint/);
+  assert.doesNotMatch(prompt, /Implement add command/);
+  assert.doesNotMatch(prompt, /Implement list command/);
+  assert.doesNotMatch(prompt, /Implement remove command/);
 });
 
 test("workflow config parses lists and hook block scalars", () => {
@@ -767,9 +784,16 @@ test("poll dispatches Linear Todo issue into workspace without prompting", async
     "  max_concurrent_agents: 1",
     "  max_turns: 2",
     "codex:",
-    "  command: echo \"$SYMPHONY_ISSUE_IDENTIFIER\" > agent-ran.txt",
+    "  command: printf '%s' \"$SYMPHONY_ISSUE_PROMPT\" > agent-prompt.txt && echo \"$SYMPHONY_ISSUE_IDENTIFIER\" > agent-ran.txt",
     "---",
-    "You are working on {{ issue.identifier }}: {{ issue.title }}",
+    "# Workflow: Build bookmark CLI",
+    "",
+    "## Execution Plan",
+    "",
+    "| ID | Title | Lane | Depends On | Status | Linear Issue | Branch/Worktree | Acceptance Criteria |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    "| LWO-001 | Scaffold bookmark CLI package and storage | serial | - | Todo | HOW-1 | - | package metadata exists |",
+    "| LWO-002 | Implement add command | parallel | LWO-001 | Backlog | HOW-2 | - | add stores bookmarks |",
   ].join("\n"));
 
   process.env.LINEAR_API_KEY = "lin_api_test";
@@ -793,8 +817,8 @@ test("poll dispatches Linear Todo issue into workspace without prompting", async
                   nodes: [{
                     id: "issue-id-1",
                     identifier: "HOW-1",
-                    title: "Build bookmark CLI",
-                    description: "Acceptance from Linear",
+                    title: "Scaffold bookmark CLI package and storage",
+                    description: "Acceptance from Linear: package metadata exists",
                     priority: 1,
                     url: "https://linear.app/acme/issue/HOW-1/test",
                     createdAt: "2026-05-07T00:00:00.000Z",
@@ -843,6 +867,10 @@ test("poll dispatches Linear Todo issue into workspace without prompting", async
     const result = await pollLinearOnce(workflowPath);
     assert.equal(result.dispatched, 1);
     assert.equal(readFileSync(join(tempDir, "workspaces", "HOW-1", "agent-ran.txt"), "utf8").trim(), "HOW-1");
+    const prompt = readFileSync(join(tempDir, "workspaces", "HOW-1", "agent-prompt.txt"), "utf8");
+    assert.match(prompt, /exactly one Linear issue: HOW-1/);
+    assert.match(prompt, /package metadata exists/);
+    assert.doesNotMatch(prompt, /Implement add command/);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalApiKey === undefined) delete process.env.LINEAR_API_KEY;

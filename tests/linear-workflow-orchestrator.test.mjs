@@ -901,6 +901,86 @@ test("poll dispatches Linear Todo issue into workspace without prompting", async
   assert.ok(queries.some((query) => query.includes("CommentCreate")));
 });
 
+test("tui background dispatch records pid state without waiting for agent completion", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "lwo-background-"));
+  const workflowPath = join(tempDir, "WORKFLOW.md");
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.LINEAR_API_KEY;
+
+  writeFileSync(workflowPath, [
+    "---",
+    "tracker:",
+    "  kind: linear",
+    "  project_slug: abc123",
+    "workspace:",
+    `  root: ${join(tempDir, "workspaces")}`,
+    "agent:",
+    "  max_concurrent_agents: 1",
+    "  max_turns: 2",
+    "codex:",
+    "  command: echo started && sleep 1 && echo done",
+    "---",
+    "# Workflow: Background dispatch",
+  ].join("\n"));
+
+  process.env.LINEAR_API_KEY = "lin_api_test";
+  globalThis.fetch = async (_url, options) => {
+    const body = JSON.parse(options.body);
+
+    if (body.query.includes("ProjectIssues")) {
+      return new Response(JSON.stringify({
+        data: {
+          projects: {
+            nodes: [{
+              id: "project-1",
+              issues: {
+                nodes: [{
+                  id: "issue-id-1",
+                  identifier: "HOW-1",
+                  title: "Run background lane",
+                  description: "Background lane acceptance",
+                  state: { name: "Todo" },
+                  team: { id: "team-1", name: "Engineering", key: "ENG" },
+                  labels: { nodes: [] },
+                }],
+              },
+            }],
+          },
+        },
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (body.query.includes("WorkflowStates")) {
+      return new Response(JSON.stringify({ data: { workflowStates: { nodes: [{ id: "state-progress", name: "In Progress" }] } } }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (body.query.includes("IssueUpdate")) {
+      return new Response(JSON.stringify({ data: { issueUpdate: { success: true, issue: { identifier: "HOW-1", state: { name: "In Progress" } } } } }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (body.query.includes("IssueComments")) {
+      return new Response(JSON.stringify({ data: { issue: { comments: { nodes: [] } } } }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (body.query.includes("CommentCreate")) {
+      return new Response(JSON.stringify({ data: { commentCreate: { success: true, comment: { id: "comment-1", body: body.variables.input.body } } } }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    throw new Error(`Unexpected query: ${body.query}`);
+  };
+
+  try {
+    const result = await pollLinearOnce(workflowPath, { "background-agent": true });
+    assert.equal(result.results[0].agent.status, "running");
+    assert.ok(result.results[0].agent.pid);
+
+    const statePath = join(tempDir, ".lwo", "runs", "how-1.json");
+    assert.match(readFileSync(statePath, "utf8"), /"status": "running"/);
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    assert.match(readFileSync(statePath, "utf8"), /"status": "completed"/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalApiKey === undefined) delete process.env.LINEAR_API_KEY;
+    else process.env.LINEAR_API_KEY = originalApiKey;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("goal command creates workflow, applies Linear, promotes ready issue, and polls", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "lwo-goal-"));
   const workflowPath = join(tempDir, "WORKFLOW.md");

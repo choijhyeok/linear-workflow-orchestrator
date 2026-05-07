@@ -1083,7 +1083,7 @@ export function prepareWorkspace(config, issue, options = {}) {
   if (createdNow && config.hooks.after_create && !options.skipHooks) {
     execFileSync("sh", ["-lc", config.hooks.after_create], {
       cwd: workspacePath,
-      stdio: "inherit",
+      stdio: options.streamHookOutput ? "inherit" : "ignore",
       env: issueRuntimeEnv(config, issue, options.env),
     });
   }
@@ -1092,8 +1092,65 @@ export function prepareWorkspace(config, issue, options = {}) {
 
 function runHook(script, cwd, env) {
   if (!script) return null;
-  execFileSync("sh", ["-lc", script], { cwd, stdio: "inherit", env });
+  execFileSync("sh", ["-lc", script], { cwd, stdio: "ignore", env });
   return { ok: true };
+}
+
+function runStateDir(workflowDir) {
+  return path.join(workflowDir, ".lwo", "runs");
+}
+
+function runStatePath(workflowDir, identifier) {
+  return path.join(runStateDir(workflowDir), `${slugifyBranchPart(identifier)}.json`);
+}
+
+function writeRunState(workflowDir, identifier, state) {
+  const dir = runStateDir(workflowDir);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(runStatePath(workflowDir, identifier), `${JSON.stringify({
+    id: identifier,
+    issue: identifier,
+    updatedAt: new Date().toISOString(),
+    ...state,
+  }, null, 2)}\n`);
+}
+
+function readJsonFile(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function isPidRunning(pid) {
+  if (!pid) return false;
+  try {
+    process.kill(Number(pid), 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function existingRunState(workflowDir, identifier) {
+  const state = readJsonFile(runStatePath(workflowDir, identifier));
+  if (!state) return null;
+  if (state.status === "running" && !isPidRunning(state.pid)) {
+    const updated = { ...state, status: "unknown", event: `process ended: ${state.event ?? "no exit captured"}` };
+    writeRunState(workflowDir, identifier, updated);
+    return updated;
+  }
+  return state;
+}
+
+function readRunEventsForWorkflow(workflowPath) {
+  const dir = runStateDir(path.dirname(path.resolve(workflowPath)));
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir)
+    .filter((name) => name.endsWith(".json"))
+    .map((name) => readJsonFile(path.join(dir, name)))
+    .filter(Boolean);
 }
 
 async function runAgentCommand(command, cwd, prompt, env, options = {}) {
@@ -1122,22 +1179,43 @@ async function runAgentCommand(command, cwd, prompt, env, options = {}) {
         LWO_MAX_TURNS: String(options.maxTurns ?? ""),
       },
     });
+    const started = {
+      status: "running",
+      command,
+      pid: child.pid,
+      logPath,
+      event: "agent running",
+      startedAt: new Date().toISOString(),
+    };
+    if (options.workflowDir && options.issueIdentifier) {
+      writeRunState(options.workflowDir, options.issueIdentifier, started);
+    }
     child.stdout.on("data", (chunk) => record(chunk, process.stdout));
     child.stderr.on("data", (chunk) => record(chunk, process.stderr));
     child.on("error", (error) => {
       log.end();
+      if (options.workflowDir && options.issueIdentifier) {
+        writeRunState(options.workflowDir, options.issueIdentifier, {
+          ...started,
+          status: "failed",
+          event: `failed to start: ${error.message}`,
+        });
+      }
       reject(error);
     });
     child.on("close", (code, signal) => {
       log.end();
       if (code === 0) {
-        resolve({
+        const completed = {
           ok: true,
+          status: "completed",
           command,
           pid: child.pid,
           logPath,
           event: lastLine ? `completed: ${lastLine}` : `completed: log ${path.relative(cwd, logPath)}`,
-        });
+        };
+        if (options.workflowDir && options.issueIdentifier) writeRunState(options.workflowDir, options.issueIdentifier, completed);
+        if (!options.backgroundAgent) resolve(completed);
       } else {
         const exit = signal ?? code;
         const error = new Error(`agent command exited with ${exit}: ${command}`);
@@ -1145,11 +1223,14 @@ async function runAgentCommand(command, cwd, prompt, env, options = {}) {
           command,
           pid: child.pid,
           logPath,
+          status: "failed",
           event: `failed (${exit}): ${lastLine || path.relative(cwd, logPath)}`,
         };
-        reject(error);
+        if (options.workflowDir && options.issueIdentifier) writeRunState(options.workflowDir, options.issueIdentifier, error.agent);
+        if (!options.backgroundAgent) reject(error);
       }
     });
+    if (options.backgroundAgent) resolve(started);
   });
 }
 
@@ -1158,6 +1239,10 @@ export async function dispatchLinearIssue(apiKey, workflowMarkdown, issue, optio
   const workflowDir = options.workflowDir ?? process.cwd();
   let activeIssue = { ...issue };
   const result = { issue: issue.identifier, state: issue.state };
+  const existingRun = existingRunState(workflowDir, issue.identifier);
+  if (existingRun?.status === "running" || existingRun?.status === "completed") {
+    return { ...result, agent: existingRun, skipped: existingRun.status };
+  }
   if (issue.state.toLowerCase() === "todo") {
     const stateId = await findStateId(apiKey, issue.teamId, "In Progress");
     if (!stateId) throw new Error(`No Linear workflow state named In Progress was found for team ${issue.teamId}.`);
@@ -1165,7 +1250,12 @@ export async function dispatchLinearIssue(apiKey, workflowMarkdown, issue, optio
     activeIssue.state = "In Progress";
   }
   const env = issueRuntimeEnv(config, activeIssue, { LINEAR_API_KEY: apiKey });
-  const workspace = prepareWorkspace(config, activeIssue, { workflowDir, skipHooks: options.skipHooks, env });
+  const workspace = prepareWorkspace(config, activeIssue, {
+    workflowDir,
+    skipHooks: options.skipHooks,
+    streamHookOutput: options["stream-agent-output"],
+    env,
+  });
   result.workspace = workspace.path;
   const workpadIssue = {
     key: activeIssue.identifier,
@@ -1183,6 +1273,8 @@ export async function dispatchLinearIssue(apiKey, workflowMarkdown, issue, optio
     maxTurns: config.agent.max_turns,
     issueIdentifier: activeIssue.identifier,
     streamAgentOutput: options["stream-agent-output"],
+    backgroundAgent: options["background-agent"],
+    workflowDir,
   });
   if (!options.skipHooks) runHook(config.hooks.after_run, workspace.path, env);
   return result;
@@ -1201,6 +1293,8 @@ export async function pollLinearOnce(workflowPath, options = {}) {
       workflowDir: path.dirname(path.resolve(workflowPath)),
       dryRunAgent: options["dry-run-agent"],
       skipHooks: options["skip-hooks"],
+      "background-agent": options["background-agent"],
+      "stream-agent-output": options["stream-agent-output"],
     })));
   return { candidates: candidates.length, dispatched: results.length, results };
 }
@@ -1214,7 +1308,7 @@ function dashboardSnapshot(workflow, options = {}) {
     maxTurns: options["max-turns"] ?? config.agent.max_turns,
     projectUrl: options["project-url"],
     nextRefresh: options["next-refresh"],
-    events: options.events,
+    events: [...readRunEventsForWorkflow(workflow), ...(options.events ?? [])],
   });
 }
 
@@ -1310,7 +1404,7 @@ function parseOptions(args) {
       continue;
     }
     const key = arg.slice(2);
-    if (["apply", "apply-linear", "checkout", "local-only", "hyperlink", "once", "dry-run-agent", "skip-hooks", "poll", "daemon", "watch", "no-clear", "open-tui", "debug", "stream-agent-output"].includes(key)) {
+    if (["apply", "apply-linear", "checkout", "local-only", "hyperlink", "once", "dry-run-agent", "skip-hooks", "poll", "daemon", "watch", "no-clear", "open-tui", "debug", "stream-agent-output", "background-agent", "foreground-agent"].includes(key)) {
       values[key] = true;
     } else {
       values[key] = args[index + 1];
@@ -1718,7 +1812,10 @@ export async function run(argv) {
       console.log(dashboardSnapshot(workflow, { ...options, events }));
       const startedAt = new Date().toISOString();
       try {
-        const result = await pollLinearOnce(workflow, options);
+        const result = await pollLinearOnce(workflow, {
+          ...options,
+          "background-agent": !options["foreground-agent"],
+        });
         events = result.results.map((item) => ({
           id: item.issue,
           issue: item.issue,

@@ -1,0 +1,42 @@
+{
+  "name": "linear-workflow-orchestrator",
+  "version": "0.1.0",
+  "description": "Plan Codex development work into workflow.md, create Linear issues, and orchestrate status-driven execution.",
+  "author": {
+    "name": "Jaehyeok Choi",
+    "email": "jaehyeok@example.com",
+    "url": "https://github.com/jaehyeok"
+  },
+  "homepage": "https://github.com/choijhyeok/linear-workflow-orchestrator",
+  "repository": "https://github.com/choijhyeok/linear-workflow-orchestrator",
+  "license": "MIT",
+  "keywords": [
+    "linear",
+    "workflow",
+    "orchestration",
+    "codex",
+    "issues"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Linear Workflow Orchestrator",
+    "shortDescription": "Turn Codex goals into workflow.md and Linear issue plans",
+    "longDescription": "Create a workflow.md from a development goal, map it into Linear issues, manage a default status model, and guide Codex through parallel, serial, review, rework, and merge lanes. Goal mode can continue planning follow-up workflow slices until the product reaches a finished state.",
+    "developerName": "Jaehyeok Choi",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/choijhyeok/linear-workflow-orchestrator",
+    "privacyPolicyURL": "https://github.com/choijhyeok/linear-workflow-orchestrator",
+    "termsOfServiceURL": "https://github.com/choijhyeok/linear-workflow-orchestrator",
+    "defaultPrompt": [
+      "/linear-workflow-orchestrator Build my feature with Linear issue orchestration",
+      "/linear-workflow-orchestrator Create a workflow.md and Linear backlog",
+      "/linear-workflow-orchestrator Plan this product in goal mode"
+    ],
+    "brandColor": "#5E6AD2",
+    "screenshots": []
+  }
+}

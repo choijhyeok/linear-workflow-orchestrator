@@ -67,14 +67,6 @@ config.statusLineCommands = {
   },
 };
 
-if (!config.statusLine || config.statusLine.source === plugin.name) {
-  config.statusLine = {
-    type: "command",
-    command: statuslineWrapperPath,
-    source: plugin.name,
-  };
-}
-
 fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
 
 fs.mkdirSync(installedSkillRoot, { recursive: true });
@@ -146,31 +138,6 @@ function tomlString(value) {
   return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
-function upsertTomlStatusLine(filePath, commandPath) {
-  let toml = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : "";
-  const command = tomlString(commandPath);
-  const line = `statusLine = { type = "command", command = ${command}, source = "linear-workflow-orchestrator" }`;
-  const lines = toml.split("\n");
-  let replaced = false;
-  let foundExternalStatusLine = false;
-  const next = lines.map((current) => {
-    if (/^statusLine\s*=/.test(current)) {
-      if (current.includes('source = "linear-workflow-orchestrator"')) {
-        replaced = true;
-        return line;
-      }
-      foundExternalStatusLine = true;
-    }
-    return current;
-  });
-  if (!replaced && !foundExternalStatusLine) {
-    const firstTableIndex = next.findIndex((current) => current.trim().startsWith("["));
-    if (firstTableIndex === -1) next.push(line);
-    else next.splice(firstTableIndex, 0, line, "");
-  }
-  fs.writeFileSync(filePath, `${next.join("\n").replace(/\n+$/, "")}\n`);
-}
-
 function upsertTomlPluginStatusLine(filePath, commandPath) {
   let toml = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : "";
   const table = '[plugins."linear-workflow-orchestrator@linear-workflow-orchestrator-marketplace".statusline]';
@@ -207,7 +174,6 @@ function upsertTomlPluginDashboard(filePath, commandPath) {
   fs.writeFileSync(filePath, `${toml.replace(/\n+$/, "")}\n`);
 }
 
-upsertTomlStatusLine(tomlPath, statuslineWrapperPath);
 upsertTomlPluginStatusLine(tomlPath, statuslineWrapperPath);
 upsertTomlPluginDashboard(tomlPath, dashboardWrapperPath);
 
@@ -218,3 +184,4 @@ console.log(`Installed statusline command: ${statuslineWrapperPath}`);
 console.log(`Installed dashboard command: ${dashboardWrapperPath}`);
 console.log(`Wrote ${configPath}`);
 console.log(`Updated ${tomlPath}`);
+console.log("Note: current Codex TUI builds do not execute arbitrary plugin HUD commands under the composer; use the dashboard wrapper in a side pane until the host supports it.");

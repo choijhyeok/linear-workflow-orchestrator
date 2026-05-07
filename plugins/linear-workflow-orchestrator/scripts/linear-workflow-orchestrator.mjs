@@ -401,6 +401,34 @@ export function updateWorkflowLinearIssues(markdown, createdIssuesByKey) {
   }).join("\n");
 }
 
+export function updateWorkflowTrackerProject(markdown, project) {
+  if (!project?.slugId) return markdown;
+  if (!markdown.startsWith("---\n")) return markdown;
+  const end = markdown.indexOf("\n---", 4);
+  if (end === -1) return markdown;
+  const frontMatter = markdown.slice(0, end);
+  const rest = markdown.slice(end);
+  let inTracker = false;
+  let changed = false;
+  const updated = frontMatter.split(/\r?\n/).map((line) => {
+    if (/^tracker:\s*$/.test(line)) {
+      inTracker = true;
+      return line;
+    }
+    if (/^[A-Za-z_][A-Za-z0-9_-]*:\s*$/.test(line) && !/^tracker:\s*$/.test(line)) inTracker = false;
+    if (inTracker && /^\s+project_slug:\s*/.test(line)) {
+      changed = true;
+      return `  project_slug: "${project.slugId}"`;
+    }
+    return line;
+  });
+  if (!changed) {
+    const trackerIndex = updated.findIndex((line) => /^tracker:\s*$/.test(line));
+    if (trackerIndex !== -1) updated.splice(trackerIndex + 1, 0, `  project_slug: "${project.slugId}"`);
+  }
+  return `${updated.join("\n")}${rest}`;
+}
+
 export function slugifyBranchPart(value) {
   return String(value)
     .trim()
@@ -921,6 +949,27 @@ export async function pollLinearOnce(workflowPath, options = {}) {
   return { candidates: candidates.length, dispatched: results.length, results };
 }
 
+async function promoteReadyIssuesToTodo(workflowPath, options = {}) {
+  const workflowMarkdown = fs.readFileSync(workflowPath, "utf8");
+  const issues = parseWorkflow(workflowMarkdown);
+  const selected = readyIssues(issues).slice(0, Number(options["max-concurrent-agents"] ?? parseWorkflowConfig(workflowMarkdown).agent.max_concurrent_agents ?? 1));
+  if (!selected.length) return [];
+  const apiKey = requireValue(process.env.LINEAR_API_KEY, "LINEAR_API_KEY is required to promote ready issues.");
+  const teamId = options["team-id"] ?? process.env.LINEAR_TEAM_ID ?? (await firstLinearTeam(apiKey))?.id;
+  const stateId = await findStateId(apiKey, teamId, "Todo");
+  if (!stateId) throw new Error(`No Linear workflow state named Todo was found for team ${teamId}.`);
+  let updated = workflowMarkdown;
+  const promoted = [];
+  for (const issue of selected) {
+    if (!issue.linearIssue) continue;
+    await updateLinearIssueStatus(apiKey, issue.linearIssue, stateId);
+    updated = updateWorkflowStatus(updated, issue.key, "Todo", issue.linearIssue);
+    promoted.push(issue);
+  }
+  fs.writeFileSync(workflowPath, updated, "utf8");
+  return promoted;
+}
+
 async function findLinearWorkpadComment(apiKey, issueId) {
   const query = `
     query IssueComments($id: String!) {
@@ -983,7 +1032,7 @@ function parseOptions(args) {
       continue;
     }
     const key = arg.slice(2);
-    if (["apply", "apply-linear", "checkout", "local-only", "hyperlink", "once", "dry-run-agent", "skip-hooks"].includes(key)) {
+    if (["apply", "apply-linear", "checkout", "local-only", "hyperlink", "once", "dry-run-agent", "skip-hooks", "poll", "daemon"].includes(key)) {
       values[key] = true;
     } else {
       values[key] = args[index + 1];
@@ -1026,6 +1075,34 @@ export async function run(argv) {
   const [rawCommand, ...rest] = argv;
   const command = rawCommand ?? "statusline";
   const options = parseOptions(rest);
+  if (command === "goal") {
+    const goal = requireValue(options._.join(" "), "goal is required");
+    const workflow = options.out ?? "WORKFLOW.md";
+    fs.writeFileSync(workflow, buildWorkflow(goal, true, [], {
+      maxConcurrentAgents: options["max-concurrent-agents"],
+      maxTurns: options["max-turns"],
+    }), "utf8");
+    fs.writeFileSync(workflow, updateStartupAnswers(fs.readFileSync(workflow, "utf8"), {
+      workspace: options.workspace ?? "github",
+      credentials: options.credentials ?? "exported",
+      goalMode: "on",
+    }), "utf8");
+    const result = { workflow, goal, mode: "goal", linear: null, promoted: [], poll: null };
+    if (options.apply || process.env.LINEAR_API_KEY) {
+      const originalLog = console.log;
+      console.log = () => {};
+      try {
+        await run(["sync-linear", workflow, "--apply"]);
+      } finally {
+        console.log = originalLog;
+      }
+      result.linear = { applied: true };
+      result.promoted = await promoteReadyIssuesToTodo(workflow, options);
+      if (options.poll || options.daemon) result.poll = await pollLinearOnce(workflow, options);
+    }
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
   if (command === "init") {
     const goal = requireValue(options._[0], "goal is required");
     fs.writeFileSync(options.out ?? "workflow.md", buildWorkflow(goal, parseBool(options["goal-mode"] ?? "off"), [], {
@@ -1065,10 +1142,11 @@ export async function run(argv) {
     let teamId = options["team-id"] ?? process.env.LINEAR_TEAM_ID;
     let projectUrl = options["project-url"] ?? process.env.LINEAR_PROJECT_URL;
     let projectId = null;
+    let context = null;
     let stateId = null;
     if (options.apply) {
       requireValue(apiKey, "LINEAR_API_KEY is required when --apply is used.");
-      const context = await resolveLinearContext(apiKey, workflowMarkdown, options);
+      context = await resolveLinearContext(apiKey, workflowMarkdown, options);
       teamId = context.teamId;
       projectUrl = context.projectUrl;
       projectId = context.projectId;
@@ -1083,7 +1161,9 @@ export async function run(argv) {
       const createdIssuesByKey = new Map(
         pendingIssues.map((issue, index) => [issue.key, createdIssues[index]?.identifier]).filter((entry) => entry[1]),
       );
-      fs.writeFileSync(workflow, updateWorkflowLinearIssues(workflowMarkdown, createdIssuesByKey), "utf8");
+      let updated = updateWorkflowLinearIssues(workflowMarkdown, createdIssuesByKey);
+      updated = updateWorkflowTrackerProject(updated, context?.project);
+      fs.writeFileSync(workflow, updated, "utf8");
       console.log(JSON.stringify(createdIssues, null, 2));
     } else {
       const dryRun = { endpoint: LINEAR_ENDPOINT, teamId, projectURL: projectUrl, issues: issueInputs };

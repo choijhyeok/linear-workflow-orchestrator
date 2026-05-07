@@ -22,6 +22,7 @@ import {
   parallelWave,
   readyIssues,
   updateStartupAnswers,
+  updateWorkflowTrackerProject,
   updateWorkflowBranch,
   updateWorkflowLinearIssues,
   updateWorkflowStatus,
@@ -191,6 +192,13 @@ test("update workflow linear issues records created identifiers", () => {
 
   assert.equal(issues.find((item) => item.key === "LWO-001").linearIssue, "");
   assert.equal(issues.find((item) => item.key === "LWO-002").linearIssue, "LWO-200");
+});
+
+test("update workflow tracker project records created project slug", () => {
+  const workflow = buildWorkflow("Build a Linear-managed Codex plugin", true);
+  const updated = updateWorkflowTrackerProject(workflow, { slugId: "abc123" });
+
+  assert.match(updated, /project_slug: "abc123"/);
 });
 
 test("ready issues only include dependency-satisfied backlog or todo work", () => {
@@ -576,6 +584,67 @@ test("poll dispatches Linear Todo issue into workspace without prompting", async
 
   assert.ok(queries.some((query) => query.includes("ProjectIssues")));
   assert.ok(queries.some((query) => query.includes("CommentCreate")));
+});
+
+test("goal command creates workflow, applies Linear, promotes ready issue, and polls", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "lwo-goal-"));
+  const workflowPath = join(tempDir, "WORKFLOW.md");
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.LINEAR_API_KEY;
+  const originalTeamId = process.env.LINEAR_TEAM_ID;
+  const originalProjectUrl = process.env.LINEAR_PROJECT_URL;
+  const originalLog = console.log;
+  const lines = [];
+  let issueCreateIndex = 0;
+  let workflowAfter = "";
+
+  process.env.LINEAR_API_KEY = "lin_api_test";
+  delete process.env.LINEAR_TEAM_ID;
+  delete process.env.LINEAR_PROJECT_URL;
+  console.log = (line) => lines.push(line);
+  globalThis.fetch = async (_url, options) => {
+    const body = JSON.parse(options.body);
+    if (body.query.includes("query Teams")) {
+      return new Response(JSON.stringify({ data: { teams: { nodes: [{ id: "team-1", name: "Engineering", key: "ENG" }] } } }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (body.query.includes("ProjectCreate")) {
+      return new Response(JSON.stringify({ data: { projectCreate: { success: true, project: { id: "project-1", name: "Goal", url: "https://linear.app/acme/project/goal-abc123", slugId: "abc123" } } } }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (body.query.includes("WorkflowStates")) {
+      return new Response(JSON.stringify({ data: { workflowStates: { nodes: [{ id: "state-backlog", name: "Backlog" }, { id: "state-todo", name: "Todo" }, { id: "state-progress", name: "In Progress" }] } } }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (body.query.includes("IssueCreate")) {
+      issueCreateIndex += 1;
+      return new Response(JSON.stringify({ data: { issueCreate: { success: true, issue: { id: `issue-${issueCreateIndex}`, identifier: `ENG-${issueCreateIndex}`, title: body.variables.input.title, url: `https://linear.app/acme/issue/ENG-${issueCreateIndex}` } } } }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (body.query.includes("IssueUpdate")) {
+      return new Response(JSON.stringify({ data: { issueUpdate: { success: true, issue: { identifier: body.variables.id, state: { name: "Todo" } } } } }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (body.query.includes("ProjectIssues")) {
+      return new Response(JSON.stringify({ data: { projects: { nodes: [] } } }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    throw new Error(`Unexpected query: ${body.query}`);
+  };
+
+  try {
+    await run(["goal", "Build bookmark CLI", "--out", workflowPath, "--apply", "--poll", "--dry-run-agent", "--skip-hooks"]);
+    workflowAfter = readFileSync(workflowPath, "utf8");
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    if (originalApiKey === undefined) delete process.env.LINEAR_API_KEY;
+    else process.env.LINEAR_API_KEY = originalApiKey;
+    if (originalTeamId === undefined) delete process.env.LINEAR_TEAM_ID;
+    else process.env.LINEAR_TEAM_ID = originalTeamId;
+    if (originalProjectUrl === undefined) delete process.env.LINEAR_PROJECT_URL;
+    else process.env.LINEAR_PROJECT_URL = originalProjectUrl;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+
+  const result = JSON.parse(lines.at(-1));
+  assert.equal(result.linear.applied, true);
+  assert.equal(result.promoted.length, 1);
+  assert.match(workflowAfter, /project_slug: "abc123"/);
 });
 
 test("start-issue marks a ready issue in progress and assigns a branch without checkout", async () => {

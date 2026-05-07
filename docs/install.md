@@ -57,7 +57,9 @@ It also installs:
 ~/.codex/bin/linear-workflow-orchestrator-statusline
 ```
 
-and registers that command in `~/.codex/config.toml`/`config.json` so command-backed Codex or OMX HUD hosts can show the active Linear issue automatically. The wrapper reads `workflow.md` from the current directory and uses `LINEAR_PROJECT_URL` or `LINEAR_WORKSPACE_URL` for clickable Linear issue links.
+and registers plugin metadata in `~/.codex/config.toml`/`config.json` for command-backed Codex or OMX HUD hosts. The wrapper reads `workflow.md` from the current directory and uses `LINEAR_PROJECT_URL` or `LINEAR_WORKSPACE_URL` for clickable Linear issue links.
+
+Current Codex TUI builds do not execute arbitrary plugin HUD commands below the composer. If nothing appears under the prompt after install, that is a host limitation, not a failed plugin install. Use `~/.codex/bin/linear-workflow-orchestrator-dashboard` in a terminal split or OMX HUD pane until the host supports command-backed dashboard panels.
 
 ## Runtime
 
@@ -66,6 +68,14 @@ The plugin uses Node.js standard library only. There is no Python package, no np
 ## Execution Model
 
 Invoke the workflow skill with `$linear-workflow-orchestrator <development goal>`. Do not use `/linear-workflow-orchestrator`; Codex reserves slash commands for built-in commands and rejects unknown slash commands before skills can run.
+
+For goal-mode automation from a shell, use the `goal` helper:
+
+```bash
+LINEAR_API_KEY=... node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs goal "Build bookmark CLI" --apply --poll
+```
+
+This creates `WORKFLOW.md`, records goal mode, creates or resolves the Linear project, registers backlog issues, promotes ready work to Todo, and runs one Linear poll tick. Start `daemon WORKFLOW.md` when you want the continuous Linear-driven runner.
 
 Generated `workflow.md` files include Symphony-style front matter:
 

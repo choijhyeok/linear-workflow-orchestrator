@@ -1,6 +1,6 @@
 ---
 name: linear-workflow-orchestrator
-description: Convert a development goal into workflow.md, ask for GitHub and Linear authority, create or dry-run Linear issues, and guide Codex through backlog, execution, review, rework, merge, cancellation, and duplicate handling. Use when the user invokes /linear-workflow-orchestrator or asks to manage Codex development work through Linear.
+description: Convert a development goal into workflow.md, ask for GitHub and Linear authority, create or dry-run Linear issues, and guide Codex through backlog, execution, review, rework, merge, cancellation, and duplicate handling. Use when the user invokes $linear-workflow-orchestrator or asks to manage Codex development work through Linear.
 ---
 
 # Linear Workflow Orchestrator
@@ -12,7 +12,7 @@ Use this skill when the user wants Codex to turn a development idea into a `work
 The intended command shape is:
 
 ```text
-/linear-workflow-orchestrator <development goal> [goal mode: on|off]
+$linear-workflow-orchestrator <development goal> [goal mode: on|off]
 ```
 
 If goal mode is on, keep checking whether more development work remains after the current workflow is complete. When the product is not finished, create the next `workflow.md` slice and continue with the same Linear/status process.
@@ -32,7 +32,7 @@ Hard gate: ask these three questions before repository inspection, creating `wor
    - on: continue discovering and registering follow-up workflow slices until the product is complete
    - off: stop after this workflow is complete
 
-The first assistant response for a new `/linear-workflow-orchestrator` request must be only the startup-question prompt plus a short statement that no workflow work will start until those answers are recorded. Do not say that goal mode is off, Linear is local-only, or GitHub is unavailable unless the user explicitly answered that way.
+The first assistant response for a new `$linear-workflow-orchestrator` request must be only the startup-question prompt plus a short statement that no workflow work will start until those answers are recorded. Do not say that goal mode is off, Linear is local-only, or GitHub is unavailable unless the user explicitly answered that way.
 
 Suggested Korean prompt shape:
 

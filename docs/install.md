@@ -65,6 +65,8 @@ The plugin uses Node.js standard library only. There is no Python package, no np
 
 ## Execution Model
 
+Invoke the workflow skill with `$linear-workflow-orchestrator <development goal>`. Do not use `/linear-workflow-orchestrator`; Codex reserves slash commands for built-in commands and rejects unknown slash commands before skills can run.
+
 At the start of a workflow, the skill should ask:
 
 - whether to use GitHub issue branches or local worktrees

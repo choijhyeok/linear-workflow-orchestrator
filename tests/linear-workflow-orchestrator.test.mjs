@@ -118,7 +118,7 @@ test("skill requires startup questions before repository work", () => {
 
   assert.match(skill, /Hard gate: ask these three questions before repository inspection/);
   assert.match(skill, /Do not infer or auto-select the answers/);
-  assert.match(skill, /first assistant response for a new `\/linear-workflow-orchestrator` request must be only the startup-question prompt/);
+  assert.match(skill, /first assistant response for a new `\$linear-workflow-orchestrator` request must be only the startup-question prompt/);
 });
 
 test("update workflow status changes matching row", () => {

@@ -121,6 +121,14 @@ test("skill requires startup questions before repository work", () => {
   assert.match(skill, /first assistant response for a new `\$linear-workflow-orchestrator` request must be only the startup-question prompt/);
 });
 
+test("skill requires Linear handoff after dry-run or failed apply", () => {
+  const skill = readFileSync(join(import.meta.dirname, "../plugins/linear-workflow-orchestrator/skills/linear-workflow-orchestrator/SKILL.md"), "utf8");
+
+  assert.match(skill, /After a dry-run or failed Linear apply, do not continue as though Linear orchestration is complete/);
+  assert.match(skill, /ask whether to run Linear registration now/);
+  assert.match(skill, /Do not mark Linear-backed issues Done or present the workflow as fully complete while `Linear Issue` cells are empty/);
+});
+
 test("update workflow status changes matching row", () => {
   const workflow = buildWorkflow("Build a Linear-managed Codex plugin", true);
   const updated = updateWorkflowStatus(workflow, "LWO-004", "In Progress", "ABC-123");

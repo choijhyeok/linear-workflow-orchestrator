@@ -75,6 +75,8 @@ At the start of a workflow, the skill should ask:
 
 These questions are a hard startup gate. The skill should ask them before inspecting the target repository, creating `workflow.md`, or deciding that the project is local-only.
 
+If Linear registration falls back to `linear-issues.preview.json`, the workflow is still before Linear backlog registration. The agent should end that turn by asking whether to run real Linear issue creation once credentials are available, instead of presenting the workflow as complete.
+
 After Linear backlog registration, active work must start through `start-issue` so the workflow records an issue-specific branch or worktree:
 
 ```bash

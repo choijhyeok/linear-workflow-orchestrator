@@ -12,6 +12,8 @@ const installedSkillPath = path.join(installedSkillRoot, "SKILL.md");
 const installedBinRoot = path.join(os.homedir(), ".codex", "bin");
 const statuslineWrapperPath = path.join(installedBinRoot, "linear-workflow-orchestrator-statusline");
 const dashboardWrapperPath = path.join(installedBinRoot, "linear-workflow-orchestrator-dashboard");
+const runWrapperPath = path.join(installedBinRoot, "linear-workflow-orchestrator-run");
+const tuiWrapperPath = path.join(installedBinRoot, "linear-workflow-orchestrator-tui");
 const helperPath = path.join(pluginRoot, "scripts", "linear-workflow-orchestrator.mjs");
 const configPath = path.join(os.homedir(), ".codex", "config.json");
 const tomlPath = path.join(os.homedir(), ".codex", "config.toml");
@@ -65,6 +67,16 @@ config.statusLineCommands = {
     description: "Show a Symphony-lite multiline dashboard for workflow.md when the host supports command-backed HUD panels.",
     source: plugin.name,
   },
+  "linear-workflow-orchestrator-run": {
+    command: runWrapperPath,
+    description: "Run the Symphony-lite dashboard and Linear poller loop together for WORKFLOW.md.",
+    source: plugin.name,
+  },
+  "linear-workflow-orchestrator-tui": {
+    command: tuiWrapperPath,
+    description: "Open the terminal operator TUI for WORKFLOW.md.",
+    source: plugin.name,
+  },
 };
 
 fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
@@ -82,7 +94,7 @@ const statuslineWrapper = [
   "#!/bin/sh",
   "set -eu",
   'if [ "$#" -eq 0 ]; then',
-  "  set -- workflow.md",
+  "  if [ -f WORKFLOW.md ]; then set -- WORKFLOW.md; else set -- workflow.md; fi",
   "fi",
   `exec node "${helperPath.replace(/"/g, '\\"')}" statusline "$@" --hyperlink`,
   "",
@@ -93,13 +105,35 @@ const dashboardWrapper = [
   "#!/bin/sh",
   "set -eu",
   'if [ "$#" -eq 0 ]; then',
-  "  set -- workflow.md",
+  "  if [ -f WORKFLOW.md ]; then set -- WORKFLOW.md; else set -- workflow.md; fi",
   "fi",
   `exec node "${helperPath.replace(/"/g, '\\"')}" dashboard "$@"`,
   "",
 ].join("\n");
 fs.writeFileSync(dashboardWrapperPath, dashboardWrapper, { mode: 0o755 });
 fs.chmodSync(dashboardWrapperPath, 0o755);
+const runWrapper = [
+  "#!/bin/sh",
+  "set -eu",
+  'if [ "$#" -eq 0 ]; then',
+  "  set -- WORKFLOW.md",
+  "fi",
+  `exec node "${helperPath.replace(/"/g, '\\"')}" run "$@"`,
+  "",
+].join("\n");
+fs.writeFileSync(runWrapperPath, runWrapper, { mode: 0o755 });
+fs.chmodSync(runWrapperPath, 0o755);
+const tuiWrapper = [
+  "#!/bin/sh",
+  "set -eu",
+  'if [ "$#" -eq 0 ]; then',
+  "  set -- WORKFLOW.md",
+  "fi",
+  `exec node "${helperPath.replace(/"/g, '\\"')}" tui "$@"`,
+  "",
+].join("\n");
+fs.writeFileSync(tuiWrapperPath, tuiWrapper, { mode: 0o755 });
+fs.chmodSync(tuiWrapperPath, 0o755);
 
 function upsertTomlSkillDirectory(filePath, directory) {
   const escaped = directory.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -182,6 +216,8 @@ console.log(`Registered skill directory: ${skillRoot}`);
 console.log(`Installed skill: ${installedSkillPath}`);
 console.log(`Installed statusline command: ${statuslineWrapperPath}`);
 console.log(`Installed dashboard command: ${dashboardWrapperPath}`);
+console.log(`Installed runner command: ${runWrapperPath}`);
+console.log(`Installed TUI command: ${tuiWrapperPath}`);
 console.log(`Wrote ${configPath}`);
 console.log(`Updated ${tomlPath}`);
 console.log("Note: current Codex TUI builds do not execute arbitrary plugin HUD commands under the composer; use the dashboard wrapper in a side pane until the host supports it.");

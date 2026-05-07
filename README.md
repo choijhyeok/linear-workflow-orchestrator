@@ -49,6 +49,9 @@ LINEAR_API_KEY=... LINEAR_TEAM_ID=... node plugins/linear-workflow-orchestrator/
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs statusline workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs statusline workflow.md --hyperlink --linear-base-url https://linear.app/choijhyeok
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs dashboard workflow.md
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs dashboard WORKFLOW.md --watch
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs run WORKFLOW.md
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs tui WORKFLOW.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs poll WORKFLOW.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs daemon WORKFLOW.md
 ```
@@ -61,7 +64,7 @@ Generated workflows include Symphony-style front matter for `tracker`, `workspac
 
 In goal mode, the skill bypasses routine continuation prompts after startup authority is recorded. With `LINEAR_API_KEY` alone, `sync-linear --apply` can resolve the first visible Linear team and create a workflow project when no `LINEAR_PROJECT_URL` is provided.
 
-For unattended Symphony-style operation, use `poll` for one dispatch tick or `daemon` for a continuous polling loop. These commands read Linear candidate issues from `tracker.project_slug`, claim eligible `Todo` work by moving it to `In Progress`, create/reuse the issue workspace under `workspace.root`, run configured hooks, update the Linear `## Codex Workpad`, and execute `codex.command` inside that per-issue workspace. The generated default `codex.command` uses non-interactive `codex exec` with bypass mode; customize it in `WORKFLOW.md` if your trust model requires different flags.
+For unattended Symphony-style operation, use `tui WORKFLOW.md` for one combined terminal TUI + polling operator screen, `poll` for one dispatch tick, or `daemon` for a continuous polling loop. These commands read Linear candidate issues from `tracker.project_slug`, claim eligible `Todo` work by moving it to `In Progress`, create/reuse the issue workspace under `workspace.root`, run configured hooks, update the Linear `## Codex Workpad`, and execute `codex.command` inside that per-issue workspace. The poller dispatches up to `agent.max_concurrent_agents` issues concurrently and passes `agent.max_turns` through the agent environment as `SYMPHONY_MAX_TURNS`/`LWO_MAX_TURNS`. The generated default `codex.command` uses non-interactive `codex exec` with bypass mode; set `codex.command: codex app-server` or another command in `WORKFLOW.md` when that is the lane runner you want.
 
 ## Status Line And Dashboard
 
@@ -79,13 +82,15 @@ Linear In Progress: LWO-004 Execute independent implementation lanes · ABC-123
 
 It selects the first issue by active status priority: In Progress, Rework, Review, Merging, Todo, then Backlog.
 
-For a larger Symphony-style operator view in a side pane or terminal split, use:
+For a larger Symphony-style terminal TUI in a new terminal, side pane, or terminal split, use:
 
 ```bash
-~/.codex/bin/linear-workflow-orchestrator-dashboard
+~/.codex/bin/linear-workflow-orchestrator-tui
 ```
 
-This prints a multiline dashboard from `workflow.md`. Current Codex TUI builds own the composer/status-line rendering and do not execute arbitrary plugin dashboard commands under the composer, so the plugin cannot force Symphony-style rows to appear below the prompt by itself. Until the host exposes command-backed HUD panels, run the dashboard wrapper in a terminal split or OMX HUD pane.
+This opens the refreshing dashboard and Linear poller loop for `WORKFLOW.md`. Use `~/.codex/bin/linear-workflow-orchestrator-dashboard --watch` when you only want the auto-refreshing dashboard without polling, or `~/.codex/bin/linear-workflow-orchestrator-run` as the older alias for the same combined operator loop.
+
+Current Codex TUI builds own the composer/status-line rendering and do not execute arbitrary plugin dashboard commands under the composer, so the plugin cannot force Symphony-style rows to appear below the prompt by itself. In a separate terminal, this is just a normal terminal TUI and does not depend on Codex TUI support.
 
 For hosts that support command-backed status lines in the future:
 

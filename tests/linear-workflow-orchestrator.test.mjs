@@ -296,10 +296,82 @@ test("dashboard summarizes active workflow issues", () => {
     nextRefresh: "manual",
   });
 
-  assert.match(dashboard, /SYMPHONY-LITE STATUS/);
+  assert.match(dashboard, /SYMPHONY STATUS/);
   assert.match(dashboard, /Agents: 1\/3/);
   assert.match(dashboard, /Max turns: 20/);
-  assert.match(dashboard, /LWO-002\s+In Progress\s+HOW-2/);
+  assert.match(dashboard, /HOW-2\s+In Progress/);
+});
+
+test("dashboard watch can render a single snapshot", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "lwo-dashboard-watch-"));
+  const workflowPath = join(tempDir, "WORKFLOW.md");
+  const originalLog = console.log;
+  const lines = [];
+
+  writeFileSync(workflowPath, buildWorkflow("Build a Linear-managed Codex plugin", true));
+  console.log = (line) => lines.push(line);
+
+  try {
+    await run(["dashboard", workflowPath, "--watch", "--once", "--no-clear"]);
+  } finally {
+    console.log = originalLog;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+
+  assert.match(lines.join("\n"), /SYMPHONY STATUS/);
+});
+
+test("run and tui commands render dashboard and perform one poll tick", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "lwo-run-once-"));
+  const workflowPath = join(tempDir, "WORKFLOW.md");
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.LINEAR_API_KEY;
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines = [];
+
+  writeFileSync(workflowPath, [
+    "---",
+    "tracker:",
+    "  kind: linear",
+    "  project_slug: abc123",
+    "polling:",
+    "  interval_ms: 5000",
+    "---",
+    "# Workflow: Operator run",
+    "",
+    "## Execution Plan",
+    "",
+    "| ID | Title | Lane | Depends On | Status | Linear Issue | Branch/Worktree | Acceptance Criteria |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    "| LWO-001 | Build queue runner | serial | - | Todo | HOW-1 | - | Runner ticks once. |",
+  ].join("\n"));
+
+  process.env.LINEAR_API_KEY = "lin_api_test";
+  console.log = (line) => lines.push(line);
+  console.error = (line) => lines.push(line);
+  globalThis.fetch = async (_url, options) => {
+    const body = JSON.parse(options.body);
+    if (body.query.includes("ProjectIssues")) {
+      return new Response(JSON.stringify({ data: { projects: { nodes: [] } } }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    throw new Error(`Unexpected query: ${body.query}`);
+  };
+
+  try {
+    await run(["tui", workflowPath, "--once", "--no-clear"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    console.error = originalError;
+    if (originalApiKey === undefined) delete process.env.LINEAR_API_KEY;
+    else process.env.LINEAR_API_KEY = originalApiKey;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+
+  const output = lines.join("\n");
+  assert.match(output, /SYMPHONY STATUS/);
+  assert.match(output, /"dispatched": 0/);
 });
 
 test("run defaults to statusline when invoked without args", async () => {

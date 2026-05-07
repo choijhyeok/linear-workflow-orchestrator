@@ -26,6 +26,7 @@ export const ACTIVE_STATUS_PRIORITY = [
 ];
 const ACTIVE_EXECUTION_STATUSES = new Set(["todo", "in progress", "rework", "review", "merging"]);
 const TERMINAL_STATUSES = new Set(["done", "canceled", "duplicate"]);
+export const WORKPAD_HEADER = "## Codex Workpad";
 
 export function parseBool(value) {
   const normalized = String(value).trim().toLowerCase();
@@ -50,7 +51,9 @@ function formatIssueRow(issue) {
   return `| ${issue.key} | ${issue.title} | ${issue.lane} | ${deps} | ${issue.status} | ${linearIssue} | ${branch} | ${issue.acceptance} |`;
 }
 
-export function buildWorkflow(goal, goalMode, extraStatuses = []) {
+export function buildWorkflow(goal, goalMode, extraStatuses = [], options = {}) {
+  const maxConcurrentAgents = Number(options.maxConcurrentAgents ?? 3);
+  const maxTurns = Number(options.maxTurns ?? 20);
   const statusRows = [
     ...DEFAULT_STATUSES,
     ...extraStatuses.map((status) => [status, "User-defined status."]),
@@ -109,6 +112,22 @@ export function buildWorkflow(goal, goalMode, extraStatuses = []) {
   ];
 
   return [
+    "---",
+    "tracker:",
+    "  kind: linear",
+    "  project_slug: pending",
+    "workspace:",
+    "  root: ~/code/workspaces",
+    "hooks:",
+    "  after_create: |",
+    "    # Optional: git clone git@github.com:your-org/your-repo.git .",
+    "agent:",
+    `  max_concurrent_agents: ${maxConcurrentAgents}`,
+    `  max_turns: ${maxTurns}`,
+    "codex:",
+    "  command: codex app-server",
+    "---",
+    "",
     `# Workflow: ${slugTitle(goal)}`,
     "",
     "## Goal",
@@ -156,6 +175,35 @@ export function buildWorkflow(goal, goalMode, extraStatuses = []) {
   ].join("\n");
 }
 
+export function parseWorkflowConfig(markdown) {
+  const config = {
+    tracker: { kind: "linear", project_slug: "" },
+    workspace: { root: "~/code/workspaces" },
+    agent: { max_concurrent_agents: 3, max_turns: 20 },
+    codex: { command: "codex app-server" },
+  };
+  if (!markdown.startsWith("---\n")) return config;
+  const end = markdown.indexOf("\n---", 4);
+  if (end === -1) return config;
+  const lines = markdown.slice(4, end).split(/\r?\n/);
+  let section = "";
+  for (const line of lines) {
+    const sectionMatch = line.match(/^([A-Za-z_][A-Za-z0-9_-]*):\s*$/);
+    if (sectionMatch) {
+      section = sectionMatch[1];
+      if (!config[section]) config[section] = {};
+      continue;
+    }
+    const valueMatch = line.match(/^\s+([A-Za-z_][A-Za-z0-9_-]*):\s*(.*)$/);
+    if (!valueMatch || !section) continue;
+    const [, key, rawValue] = valueMatch;
+    const unquoted = rawValue.replace(/^["']|["']$/g, "");
+    const numeric = Number(unquoted);
+    config[section][key] = Number.isFinite(numeric) && unquoted.trim() !== "" ? numeric : unquoted;
+  }
+  return config;
+}
+
 export function parseWorkflow(markdown) {
   const issues = [];
   let inPlan = false;
@@ -199,6 +247,38 @@ export function formatStatusLine(issue, options = {}) {
   const linearLabel = options.hyperlink && url ? terminalHyperlink(issue.linearIssue, url) : issue.linearIssue;
   const linear = issue.linearIssue ? ` · ${linearLabel}` : "";
   return `Linear ${issue.status}: ${issue.key} ${title}${linear}`;
+}
+
+function pad(value, width) {
+  const text = String(value ?? "");
+  return text.length > width ? `${text.slice(0, Math.max(0, width - 1))}…` : text.padEnd(width, " ");
+}
+
+export function formatDashboard(issues, options = {}) {
+  const active = issues.filter((issue) => ACTIVE_EXECUTION_STATUSES.has(issue.status.toLowerCase()));
+  const maxAgents = Number(options.maxConcurrentAgents ?? issues.length);
+  const maxTurns = Number(options.maxTurns ?? 20);
+  const project = options.projectUrl ?? process.env.LINEAR_PROJECT_URL ?? "n/a";
+  const nextRefresh = options.nextRefresh ?? "manual";
+  const rows = [
+    "SYMPHONY-LITE STATUS",
+    `Agents: ${active.length}/${maxAgents}`,
+    `Max turns: ${maxTurns}`,
+    `Project: ${project}`,
+    `Next refresh: ${nextRefresh}`,
+    "",
+    "Running",
+    "",
+    `${pad("ID", 10)} ${pad("STAGE", 12)} ${pad("LINEAR", 12)} ${pad("BRANCH/WORKTREE", 28)} TITLE`,
+    `${"-".repeat(10)} ${"-".repeat(12)} ${"-".repeat(12)} ${"-".repeat(28)} ${"-".repeat(40)}`,
+  ];
+  for (const issue of issues.filter((item) => !TERMINAL_STATUSES.has(item.status.toLowerCase()))) {
+    rows.push(`${pad(issue.key, 10)} ${pad(issue.status, 12)} ${pad(issue.linearIssue || "-", 12)} ${pad(issue.branch || "-", 28)} ${issue.title}`);
+  }
+  const blocked = issues.filter((issue) => issue.status.toLowerCase() === "backlog" && issue.dependsOn.length);
+  rows.push("", "Backoff queue", "");
+  rows.push(blocked.length ? `${blocked.length} waiting on dependencies` : "No queued retries");
+  return rows.join("\n");
 }
 
 export function linearWorkspaceBaseUrl(value) {
@@ -306,8 +386,11 @@ export function readyIssues(issues) {
   });
 }
 
-export function parallelWave(issues) {
-  return readyIssues(issues).filter((issue) => issue.lane.toLowerCase() === "parallel");
+export function parallelWave(issues, options = {}) {
+  const maxConcurrentAgents = Number(options.maxConcurrentAgents ?? issues.length);
+  const running = issues.filter((issue) => ACTIVE_EXECUTION_STATUSES.has(issue.status.toLowerCase())).length;
+  const capacity = Math.max(0, maxConcurrentAgents - running);
+  return readyIssues(issues).filter((issue) => issue.lane.toLowerCase() === "parallel").slice(0, capacity);
 }
 
 export function hasActiveSerialIssue(issues, issueKey) {
@@ -428,6 +511,43 @@ export function linearDescription(issue, workflowPath) {
   ].join("\n");
 }
 
+export function initialWorkpadBody(issue, options = {}) {
+  const now = options.now ?? new Date().toISOString();
+  const branch = options.branch ? `\n- Branch/Worktree: \`${options.branch}\`` : "";
+  return [
+    WORKPAD_HEADER,
+    "",
+    `- Workflow ID: \`${issue.key}\``,
+    `- Status: \`${issue.status}\`${branch}`,
+    `- Last update: ${now}`,
+    "",
+    "### Acceptance Criteria",
+    "",
+    `- [ ] ${issue.acceptance}`,
+    "",
+    "### Plan",
+    "",
+    "- [ ] Reproduce or confirm the requested behavior.",
+    "- [ ] Implement the scoped change in the issue branch/worktree.",
+    "- [ ] Run validation and record evidence here.",
+    "- [ ] Link PR or merge artifact before handoff.",
+    "",
+    "### Progress Log",
+    "",
+    `- ${now}: Workpad created.`,
+    "",
+  ].join("\n");
+}
+
+export function appendWorkpadNote(body, note, options = {}) {
+  const now = options.now ?? new Date().toISOString();
+  const entry = `- ${now}: ${note}`;
+  if (body.includes("### Progress Log")) {
+    return body.replace(/(### Progress Log\s*\n)/, `$1\n${entry}\n`);
+  }
+  return `${body.replace(/\n*$/, "\n\n")}### Progress Log\n\n${entry}\n`;
+}
+
 export function buildIssueInputs(issues, workflowPath, teamId, projectUrl, stateId = null, resolvedProjectId = null) {
   const projectId = resolvedProjectId ?? projectIdFromUrl(projectUrl);
   return issues.map((issue) => {
@@ -526,6 +646,59 @@ async function updateLinearIssueStatus(apiKey, issueId, stateId) {
   return data.issueUpdate.issue;
 }
 
+async function findLinearWorkpadComment(apiKey, issueId) {
+  const query = `
+    query IssueComments($id: String!) {
+      issue(id: $id) {
+        comments {
+          nodes { id body }
+        }
+      }
+    }
+  `;
+  const data = await graphql(apiKey, query, { id: issueId });
+  return data.issue.comments.nodes.find((comment) => String(comment.body ?? "").includes(WORKPAD_HEADER)) ?? null;
+}
+
+async function createLinearComment(apiKey, issueId, body) {
+  const mutation = `
+    mutation CommentCreate($input: CommentCreateInput!) {
+      commentCreate(input: $input) {
+        success
+        comment { id body }
+      }
+    }
+  `;
+  const data = await graphql(apiKey, mutation, { input: { issueId, body } });
+  if (!data.commentCreate.success) throw new Error(`Linear commentCreate did not succeed for ${issueId}`);
+  return data.commentCreate.comment;
+}
+
+async function updateLinearComment(apiKey, commentId, body) {
+  const mutation = `
+    mutation CommentUpdate($id: String!, $input: CommentUpdateInput!) {
+      commentUpdate(id: $id, input: $input) {
+        success
+        comment { id body }
+      }
+    }
+  `;
+  const data = await graphql(apiKey, mutation, { id: commentId, input: { body } });
+  if (!data.commentUpdate.success) throw new Error(`Linear commentUpdate did not succeed for ${commentId}`);
+  return data.commentUpdate.comment;
+}
+
+export async function ensureLinearWorkpad(apiKey, issueId, issue, options = {}) {
+  const existing = await findLinearWorkpadComment(apiKey, issueId);
+  const note = options.note ?? `Entered ${issue.status}.`;
+  if (existing) {
+    const body = appendWorkpadNote(existing.body, note, options);
+    return { action: "updated", comment: await updateLinearComment(apiKey, existing.id, body) };
+  }
+  const body = appendWorkpadNote(initialWorkpadBody(issue, options), note, options);
+  return { action: "created", comment: await createLinearComment(apiKey, issueId, body) };
+}
+
 function parseOptions(args) {
   const values = { _: [] };
   for (let index = 0; index < args.length; index += 1) {
@@ -580,7 +753,10 @@ export async function run(argv) {
   const options = parseOptions(rest);
   if (command === "init") {
     const goal = requireValue(options._[0], "goal is required");
-    fs.writeFileSync(options.out ?? "workflow.md", buildWorkflow(goal, parseBool(options["goal-mode"] ?? "off")), "utf8");
+    fs.writeFileSync(options.out ?? "workflow.md", buildWorkflow(goal, parseBool(options["goal-mode"] ?? "off"), [], {
+      maxConcurrentAgents: options["max-concurrent-agents"],
+      maxTurns: options["max-turns"],
+    }), "utf8");
     console.log(`wrote ${options.out ?? "workflow.md"}`);
     return;
   }
@@ -648,7 +824,11 @@ export async function run(argv) {
   }
   if (command === "wave") {
     const workflow = requireValue(options._[0], "workflow path is required");
-    console.log(JSON.stringify(parallelWave(parseWorkflow(fs.readFileSync(workflow, "utf8"))), null, 2));
+    const workflowMarkdown = fs.readFileSync(workflow, "utf8");
+    const config = parseWorkflowConfig(workflowMarkdown);
+    console.log(JSON.stringify(parallelWave(parseWorkflow(workflowMarkdown), {
+      maxConcurrentAgents: options["max-concurrent-agents"] ?? config.agent.max_concurrent_agents,
+    }), null, 2));
     return;
   }
   if (command === "select-issue") {
@@ -720,7 +900,29 @@ export async function run(argv) {
       const stateId = await findStateId(apiKey, teamId, "In Progress");
       if (!stateId) throw new Error("No Linear workflow state named In Progress was found.");
       result.linear = await updateLinearIssueStatus(apiKey, linearIssue, stateId);
+      result.workpad = await ensureLinearWorkpad(apiKey, linearIssue, { ...issue, status: "In Progress" }, {
+        branch: branchOrWorktree,
+        note: options["workpad-note"] ?? `Started active work in ${branchOrWorktree}.`,
+      });
     }
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  if (command === "workpad") {
+    const [workflow, issueKey] = options._;
+    requireValue(workflow, "workflow path is required");
+    requireValue(issueKey, "issue key is required");
+    const workflowMarkdown = fs.readFileSync(workflow, "utf8");
+    const issue = issueByKey(workflowMarkdown, issueKey);
+    const apiKey = requireValue(process.env.LINEAR_API_KEY, "LINEAR_API_KEY is required for workpad updates.");
+    const linearIssue = requireValue(options["linear-issue"] ?? issue.linearIssue, "Linear issue identifier is required for workpad updates.");
+    const note = options.note ?? `Updated ${issue.status}.`;
+    const result = {
+      workflow,
+      issueKey,
+      linearIssue,
+      workpad: await ensureLinearWorkpad(apiKey, linearIssue, issue, { branch: issue.branch, note }),
+    };
     console.log(JSON.stringify(result, null, 2));
     return;
   }
@@ -744,6 +946,20 @@ export async function run(argv) {
     }
     return;
   }
+  if (command === "dashboard") {
+    const workflow = options._[0] ?? "workflow.md";
+    if (!fs.existsSync(workflow)) {
+      console.log(options.empty ?? "No workflow.md");
+      return;
+    }
+    console.log(formatDashboard(parseWorkflow(fs.readFileSync(workflow, "utf8")), {
+      maxConcurrentAgents: options["max-concurrent-agents"] ?? parseWorkflowConfig(fs.readFileSync(workflow, "utf8")).agent.max_concurrent_agents,
+      maxTurns: options["max-turns"] ?? parseWorkflowConfig(fs.readFileSync(workflow, "utf8")).agent.max_turns,
+      projectUrl: options["project-url"],
+      nextRefresh: options["next-refresh"],
+    }));
+    return;
+  }
   if (command === "set-status") {
     const [workflow, issueKey, status] = options._;
     requireValue(workflow, "workflow path is required");
@@ -762,6 +978,10 @@ export async function run(argv) {
       const stateId = await findStateId(apiKey, teamId, status);
       if (!stateId) throw new Error(`No Linear workflow state named ${status} was found for team ${teamId}.`);
       result.linear = await updateLinearIssueStatus(apiKey, linearIssue, stateId);
+      result.workpad = await ensureLinearWorkpad(apiKey, linearIssue, { ...issue, status }, {
+        branch: issue.branch,
+        note: options["workpad-note"] ?? `Moved to ${status}.`,
+      });
     }
     console.log(JSON.stringify(result, null, 2));
     return;

@@ -67,6 +67,22 @@ The plugin uses Node.js standard library only. There is no Python package, no np
 
 Invoke the workflow skill with `$linear-workflow-orchestrator <development goal>`. Do not use `/linear-workflow-orchestrator`; Codex reserves slash commands for built-in commands and rejects unknown slash commands before skills can run.
 
+Generated `workflow.md` files include Symphony-style front matter:
+
+```yaml
+tracker:
+  kind: linear
+workspace:
+  root: ~/code/workspaces
+agent:
+  max_concurrent_agents: 10
+  max_turns: 20
+codex:
+  command: codex app-server
+```
+
+`wave` respects `agent.max_concurrent_agents` when selecting parallel work. `dashboard` shows the active/max agent count and turn budget. The plugin records `max_turns` as orchestration policy; enforcing actual Codex process termination still depends on the host runner.
+
 At the start of a workflow, the skill should ask:
 
 - whether to use GitHub issue branches or local worktrees
@@ -77,13 +93,16 @@ These questions are a hard startup gate. The skill should ask them before inspec
 
 If Linear registration falls back to `linear-issues.preview.json`, the workflow is still before Linear backlog registration. The agent should end that turn by asking whether to run real Linear issue creation once credentials are available, instead of presenting the workflow as complete.
 
+After Linear registration, Linear is the execution queue. When an issue moves from Todo to In Progress, the helper creates or reuses a single Linear comment headed `## Codex Workpad`; all plans, progress notes, validation evidence, review findings, PR links, and handoffs should be appended there instead of scattered across separate comments.
+
 After Linear backlog registration, active work must start through `start-issue` so the workflow records an issue-specific branch or worktree:
 
 ```bash
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs ready workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs wave workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs select-issue workflow.md LWO-004
-node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs start-issue workflow.md LWO-004 --mode github --checkout
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs start-issue workflow.md LWO-004 --mode github --checkout --apply-linear
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs workpad workflow.md LWO-004 --note "Validation passed and PR is linked."
 ```
 
 For concurrent Codex/Symphony-style work, start multiple dependency-ready `parallel` issues into separate branches or worktrees and assign one Codex session to each lane.

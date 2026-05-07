@@ -7,10 +7,11 @@ The intended workflow is not "create Linear issues after the work is already don
 1. Ask startup questions for GitHub branch vs local worktree, Linear credential source, and goal mode before inspecting or editing the target project.
 2. Register all discovered tasks as Linear Backlog issues.
 3. Move only dependency-ready issues into Todo/In Progress.
-4. Create one issue branch or local worktree per active Linear issue.
-5. Run serial work one issue at a time; run ready `parallel` lanes in separate Codex sessions/worktrees for Symphony-style concurrent execution.
-6. Move implemented work to Review and use a different Codex session/agent for code review.
-7. Merge only reviewed issue branches/PRs or local worktree integration branches.
+4. Create or reuse one Linear `## Codex Workpad` comment per active issue and record plan, progress, validation, PR links, review findings, and handoff notes there.
+5. Create one issue branch or local worktree per active Linear issue.
+6. Run serial work one issue at a time; run ready `parallel` lanes in separate Codex sessions/worktrees for Symphony-style concurrent execution.
+7. Move implemented work to Review and use a different Codex session/agent for code review.
+8. Merge only reviewed issue branches/PRs or local worktree integration branches.
 
 ## Command Shape
 
@@ -30,6 +31,7 @@ Backlog, Todo, In Progress, Rework, Review, Merging, Done, Canceled, and Duplica
 
 ```bash
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs init "Build my feature" --goal-mode on --out workflow.md
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs init "Build my feature" --goal-mode on --max-concurrent-agents 10 --max-turns 20 --out workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs preflight
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs record-preflight workflow.md --workspace github --credentials exported --goal-mode on
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs parse workflow.md
@@ -45,9 +47,12 @@ node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.m
 LINEAR_API_KEY=... LINEAR_TEAM_ID=... node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs set-status workflow.md LWO-004 Review --linear-issue ABC-123 --apply-linear
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs statusline workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs statusline workflow.md --hyperlink --linear-base-url https://linear.app/choijhyeok
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs dashboard workflow.md
 ```
 
 `--apply` calls Linear's GraphQL API. Without `--apply`, the script only generates the payload that would be sent.
+
+Generated workflows include Symphony-style front matter for `tracker`, `workspace`, `hooks`, `agent`, and `codex`. `agent.max_concurrent_agents` limits how many ready parallel issues `wave` selects, and `agent.max_turns` is surfaced as the per-issue lane budget in the dashboard/workflow policy.
 
 ## Status Line
 
@@ -64,6 +69,14 @@ Linear In Progress: LWO-004 Execute independent implementation lanes · ABC-123
 ```
 
 It selects the first issue by active status priority: In Progress, Rework, Review, Merging, Todo, then Backlog.
+
+For a larger Symphony-style operator view, use:
+
+```bash
+~/.codex/bin/linear-workflow-orchestrator-dashboard
+```
+
+This prints a multiline dashboard from `workflow.md`. Showing it under the Codex composer depends on the local Codex/OMX host supporting command-backed multiline HUD panels.
 
 Codex plugins expose skills and companion files, but native TUI status-line wiring is owned by the local Codex/OMX setup. After installing the plugin, add this script as a custom status-line/HUD command in the host setup that supports command-backed status items.
 
@@ -104,7 +117,7 @@ codex plugin marketplace add /Users/jaehyeokchoi/Desktop/linear-workflow-orchest
 npm run install:local
 ```
 
-`install:local` also installs `~/.codex/bin/linear-workflow-orchestrator-statusline` and registers it in Codex config as the plugin statusline command. When the host supports command-backed status lines, active Linear workflow issues are shown automatically from the current `workflow.md`.
+`install:local` also installs `~/.codex/bin/linear-workflow-orchestrator-statusline` and `~/.codex/bin/linear-workflow-orchestrator-dashboard`, then registers them in Codex config as plugin status commands. When the host supports command-backed status lines or HUD panels, active Linear workflow issues are shown automatically from the current `workflow.md`.
 
 ## Dogfood Example
 

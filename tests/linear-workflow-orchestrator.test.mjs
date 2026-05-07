@@ -113,6 +113,14 @@ test("preflight questions cover workspace credentials and goal mode", () => {
   assert.equal(questions[1].options[0], "exported");
 });
 
+test("skill requires startup questions before repository work", () => {
+  const skill = readFileSync(join(import.meta.dirname, "../plugins/linear-workflow-orchestrator/skills/linear-workflow-orchestrator/SKILL.md"), "utf8");
+
+  assert.match(skill, /Hard gate: ask these three questions before repository inspection/);
+  assert.match(skill, /Do not infer or auto-select the answers/);
+  assert.match(skill, /first assistant response for a new `\/linear-workflow-orchestrator` request must be only the startup-question prompt/);
+});
+
 test("update workflow status changes matching row", () => {
   const workflow = buildWorkflow("Build a Linear-managed Codex plugin", true);
   const updated = updateWorkflowStatus(workflow, "LWO-004", "In Progress", "ABC-123");

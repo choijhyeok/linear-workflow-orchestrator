@@ -4,7 +4,7 @@ Codex plugin prototype for turning a development goal into a `workflow.md`, crea
 
 The intended workflow is not "create Linear issues after the work is already done." It is:
 
-1. Ask startup questions for GitHub branch vs local worktree, Linear credential source, and goal mode.
+1. Ask startup questions for GitHub branch vs local worktree, Linear credential source, and goal mode before inspecting or editing the target project.
 2. Register all discovered tasks as Linear Backlog issues.
 3. Move only dependency-ready issues into Todo/In Progress.
 4. Create one issue branch or local worktree per active Linear issue.

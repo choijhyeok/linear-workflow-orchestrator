@@ -614,6 +614,67 @@ async function findProjectId(apiKey, teamId, projectUrl) {
   return match.id;
 }
 
+async function firstLinearTeam(apiKey) {
+  const query = `
+    query Teams {
+      teams {
+        nodes { id name key }
+      }
+    }
+  `;
+  const data = await graphql(apiKey, query, {});
+  return data.teams.nodes[0] ?? null;
+}
+
+function workflowTitle(markdown) {
+  return markdown.match(/^# Workflow:\s*(.+)$/m)?.[1]?.trim() || "Codex workflow";
+}
+
+async function createLinearProject(apiKey, teamId, markdown, options = {}) {
+  const name = options["project-name"] ?? workflowTitle(markdown);
+  const mutation = `
+    mutation ProjectCreate($input: ProjectCreateInput!) {
+      projectCreate(input: $input) {
+        success
+        project { id name url slugId }
+      }
+    }
+  `;
+  const data = await graphql(apiKey, mutation, {
+    input: {
+      name,
+      teamIds: [teamId],
+      description: "Created by Linear Workflow Orchestrator.",
+    },
+  });
+  if (!data.projectCreate.success) throw new Error(`Linear projectCreate did not succeed for ${name}`);
+  return data.projectCreate.project;
+}
+
+async function resolveLinearContext(apiKey, workflowMarkdown, options = {}) {
+  let teamId = options["team-id"] ?? process.env.LINEAR_TEAM_ID;
+  let team = null;
+  if (!teamId) {
+    team = await firstLinearTeam(apiKey);
+    if (!team) throw new Error("No Linear teams are visible to this API key.");
+    teamId = team.id;
+  }
+
+  let projectUrl = options["project-url"] ?? process.env.LINEAR_PROJECT_URL;
+  let projectId = projectIdFromUrl(projectUrl);
+  let project = null;
+  if (!projectId && projectUrl) {
+    projectId = await findProjectId(apiKey, teamId, projectUrl);
+  }
+  if (!projectId && !projectUrl) {
+    project = await createLinearProject(apiKey, teamId, workflowMarkdown, options);
+    projectId = project.id;
+    projectUrl = project.url;
+  }
+
+  return { teamId, team, projectId, projectUrl, project };
+}
+
 async function createLinearIssues(apiKey, issueInputs) {
   const mutation = `
     mutation IssueCreate($input: IssueCreateInput!) {
@@ -786,16 +847,20 @@ export async function run(argv) {
     const workflow = requireValue(options._[0], "workflow path is required");
     const workflowMarkdown = fs.readFileSync(workflow, "utf8");
     requireStartupAnswers(workflowMarkdown);
-    const teamId = options["team-id"] ?? process.env.LINEAR_TEAM_ID;
-    const projectUrl = options["project-url"] ?? process.env.LINEAR_PROJECT_URL;
-    requireValue(teamId, "LINEAR_TEAM_ID is required for Linear sync or dry-run payload generation.");
     const apiKey = process.env.LINEAR_API_KEY;
-    let stateId = null;
+    let teamId = options["team-id"] ?? process.env.LINEAR_TEAM_ID;
+    let projectUrl = options["project-url"] ?? process.env.LINEAR_PROJECT_URL;
     let projectId = null;
+    let stateId = null;
     if (options.apply) {
       requireValue(apiKey, "LINEAR_API_KEY is required when --apply is used.");
+      const context = await resolveLinearContext(apiKey, workflowMarkdown, options);
+      teamId = context.teamId;
+      projectUrl = context.projectUrl;
+      projectId = context.projectId;
       stateId = await findStateId(apiKey, teamId, "Backlog");
-      projectId = await findProjectId(apiKey, teamId, projectUrl);
+    } else {
+      requireValue(teamId, "LINEAR_TEAM_ID is required for dry-run payload generation. Use --apply with LINEAR_API_KEY to auto-resolve a team.");
     }
     const pendingIssues = parseWorkflow(workflowMarkdown).filter((issue) => !issue.linearIssue);
     const issueInputs = buildIssueInputs(pendingIssues, workflow, teamId, projectUrl, stateId, projectId);
@@ -815,6 +880,14 @@ export async function run(argv) {
         console.log(JSON.stringify(dryRun, null, 2));
       }
     }
+    return;
+  }
+  if (command === "resolve-linear") {
+    const workflow = options._[0] ?? "workflow.md";
+    const workflowMarkdown = fs.existsSync(workflow) ? fs.readFileSync(workflow, "utf8") : "";
+    const apiKey = requireValue(process.env.LINEAR_API_KEY, "LINEAR_API_KEY is required.");
+    const context = await resolveLinearContext(apiKey, workflowMarkdown, options);
+    console.log(JSON.stringify(context, null, 2));
     return;
   }
   if (command === "ready") {

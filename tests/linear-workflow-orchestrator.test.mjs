@@ -374,8 +374,77 @@ test("sync-linear apply queries workflow states with Linear ID team variable", a
     rmSync(tempDir, { recursive: true, force: true });
   }
 
-  assert.match(queries[0], /query WorkflowStates\(\$teamId: ID!\)/);
-  assert.match(queries[1], /query Projects\(\$teamId: String!\)/);
+  assert.ok(queries.some((query) => /query WorkflowStates\(\$teamId: ID!\)/.test(query)));
+  assert.ok(queries.some((query) => /query Projects\(\$teamId: String!\)/.test(query)));
+});
+
+test("sync-linear apply resolves team and creates project from api key only", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "lwo-auto-linear-"));
+  const workflowPath = join(tempDir, "workflow.md");
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.LINEAR_API_KEY;
+  const originalTeamId = process.env.LINEAR_TEAM_ID;
+  const originalProjectUrl = process.env.LINEAR_PROJECT_URL;
+  const originalLog = console.log;
+  const queries = [];
+
+  writeFileSync(workflowPath, executableWorkflow("Build bookmark CLI"));
+  process.env.LINEAR_API_KEY = "lin_api_test";
+  delete process.env.LINEAR_TEAM_ID;
+  delete process.env.LINEAR_PROJECT_URL;
+  console.log = () => {};
+  globalThis.fetch = async (_url, options) => {
+    const body = JSON.parse(options.body);
+    queries.push(body.query);
+
+    if (body.query.includes("query Teams")) {
+      return new Response(
+        JSON.stringify({ data: { teams: { nodes: [{ id: "team-auto", name: "Engineering", key: "ENG" }] } } }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (body.query.includes("ProjectCreate")) {
+      assert.equal(body.variables.input.teamIds[0], "team-auto");
+      return new Response(
+        JSON.stringify({ data: { projectCreate: { success: true, project: { id: "project-auto", name: "Build bookmark CLI", url: "https://linear.app/acme/project/build-bookmark-cli-abc123", slugId: "abc123" } } } }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (body.query.includes("WorkflowStates")) {
+      assert.equal(body.variables.teamId, "team-auto");
+      return new Response(
+        JSON.stringify({ data: { workflowStates: { nodes: [{ id: "state-backlog", name: "Backlog" }] } } }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (body.query.includes("IssueCreate")) {
+      assert.equal(body.variables.input.teamId, "team-auto");
+      assert.equal(body.variables.input.projectId, "project-auto");
+      return new Response(
+        JSON.stringify({ data: { issueCreate: { success: true, issue: { identifier: "ENG-1", url: "https://linear.app/acme/issue/ENG-1/test" } } } }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    throw new Error(`Unexpected query: ${body.query}`);
+  };
+
+  try {
+    await run(["sync-linear", workflowPath, "--apply"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    if (originalApiKey === undefined) delete process.env.LINEAR_API_KEY;
+    else process.env.LINEAR_API_KEY = originalApiKey;
+    if (originalTeamId === undefined) delete process.env.LINEAR_TEAM_ID;
+    else process.env.LINEAR_TEAM_ID = originalTeamId;
+    if (originalProjectUrl === undefined) delete process.env.LINEAR_PROJECT_URL;
+    else process.env.LINEAR_PROJECT_URL = originalProjectUrl;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+
+  assert.ok(queries.some((query) => query.includes("query Teams")));
+  assert.ok(queries.some((query) => query.includes("ProjectCreate")));
 });
 
 test("start-issue marks a ready issue in progress and assigns a branch without checkout", async () => {

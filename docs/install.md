@@ -83,6 +83,10 @@ codex:
 
 `wave` respects `agent.max_concurrent_agents` when selecting parallel work. `dashboard` shows the active/max agent count and turn budget. The plugin records `max_turns` as orchestration policy; enforcing actual Codex process termination still depends on the host runner.
 
+When goal mode is on, the skill should bypass routine "continue?" prompts after startup authority is recorded. It should keep progressing until the goal is complete, blocked by missing credentials, or blocked by out-of-scope/destructive action.
+
+For Linear setup, `LINEAR_API_KEY` is enough for `sync-linear --apply` in the common case. If `LINEAR_TEAM_ID` is missing, the helper uses the first team visible to the API key. If `LINEAR_PROJECT_URL` is missing, the helper creates a Linear project for the workflow and uses that project id/url for issue registration.
+
 At the start of a workflow, the skill should ask:
 
 - whether to use GitHub issue branches or local worktrees

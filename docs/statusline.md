@@ -44,12 +44,26 @@ Done, Canceled, and Duplicate issues are terminal and do not occupy the active s
 
 ## Host Wiring
 
-Codex plugin installation discovers skills and plugin files. Native TUI status-line registration is host setup territory, so the plugin provides an executable command that a host status-line or OMX HUD integration can call.
+`npm run install:local` installs this wrapper:
 
-For Codex builds that support a command-backed status line, configure the host to execute the plugin script:
+```text
+~/.codex/bin/linear-workflow-orchestrator-statusline
+```
+
+and registers it in `~/.codex/config.toml` and `~/.codex/config.json` as the plugin's statusline command. Hosts that support command-backed status lines can pick it up automatically. The wrapper defaults to `workflow.md` in the current directory and enables `--hyperlink`.
+
+Direct wrapper check:
+
+```bash
+~/.codex/bin/linear-workflow-orchestrator-statusline
+```
+
+Codex plugin installation also discovers skills and plugin files. Native TUI status-line rendering remains host-dependent, so unsupported hosts may keep the command registered without rendering it.
+
+For Codex builds that support a command-backed status line, the installer writes the equivalent of:
 
 ```toml
-statusLine = { type = "command", command = "/absolute/path/to/linear-workflow-orchestrator/plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs" }
+statusLine = { type = "command", command = "/Users/you/.codex/bin/linear-workflow-orchestrator-statusline", source = "linear-workflow-orchestrator" }
 ```
 
 For a Codex-HUD-style command, point the HUD item at:

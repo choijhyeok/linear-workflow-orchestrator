@@ -9,6 +9,8 @@ const skillRoot = path.join(pluginRoot, "skills", "linear-workflow-orchestrator"
 const sourceSkillPath = path.join(skillRoot, "SKILL.md");
 const installedSkillRoot = path.join(os.homedir(), ".codex", "skills", "linear-workflow-orchestrator");
 const installedSkillPath = path.join(installedSkillRoot, "SKILL.md");
+const installedBinRoot = path.join(os.homedir(), ".codex", "bin");
+const statuslineWrapperPath = path.join(installedBinRoot, "linear-workflow-orchestrator-statusline");
 const helperPath = path.join(pluginRoot, "scripts", "linear-workflow-orchestrator.mjs");
 const configPath = path.join(os.homedir(), ".codex", "config.json");
 const tomlPath = path.join(os.homedir(), ".codex", "config.toml");
@@ -50,6 +52,23 @@ config.skillDirectories = unique(
     .concat(skillRoot),
 );
 
+config.statusLineCommands = {
+  ...(config.statusLineCommands || {}),
+  "linear-workflow-orchestrator": {
+    command: statuslineWrapperPath,
+    description: "Show the active Linear workflow issue from workflow.md with terminal hyperlinks when supported.",
+    source: plugin.name,
+  },
+};
+
+if (!config.statusLine || config.statusLine.source === plugin.name) {
+  config.statusLine = {
+    type: "command",
+    command: statuslineWrapperPath,
+    source: plugin.name,
+  };
+}
+
 fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
 
 fs.mkdirSync(installedSkillRoot, { recursive: true });
@@ -59,6 +78,19 @@ const installedSkill = sourceSkill.replaceAll(
   `node ${helperPath}`,
 );
 fs.writeFileSync(installedSkillPath, installedSkill);
+
+fs.mkdirSync(installedBinRoot, { recursive: true });
+const statuslineWrapper = [
+  "#!/bin/sh",
+  "set -eu",
+  'if [ "$#" -eq 0 ]; then',
+  "  set -- workflow.md",
+  "fi",
+  `exec node "${helperPath.replace(/"/g, '\\"')}" statusline "$@" --hyperlink`,
+  "",
+].join("\n");
+fs.writeFileSync(statuslineWrapperPath, statuslineWrapper, { mode: 0o755 });
+fs.chmodSync(statuslineWrapperPath, 0o755);
 
 function upsertTomlSkillDirectory(filePath, directory) {
   const escaped = directory.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -93,8 +125,59 @@ function upsertTomlSkillDirectory(filePath, directory) {
 
 upsertTomlSkillDirectory(tomlPath, skillRoot);
 
+function tomlString(value) {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+function upsertTomlStatusLine(filePath, commandPath) {
+  let toml = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : "";
+  const command = tomlString(commandPath);
+  const line = `statusLine = { type = "command", command = ${command}, source = "linear-workflow-orchestrator" }`;
+  const lines = toml.split("\n");
+  let replaced = false;
+  let foundExternalStatusLine = false;
+  const next = lines.map((current) => {
+    if (/^statusLine\s*=/.test(current)) {
+      if (current.includes('source = "linear-workflow-orchestrator"')) {
+        replaced = true;
+        return line;
+      }
+      foundExternalStatusLine = true;
+    }
+    return current;
+  });
+  if (!replaced && !foundExternalStatusLine) {
+    const firstTableIndex = next.findIndex((current) => current.trim().startsWith("["));
+    if (firstTableIndex === -1) next.push(line);
+    else next.splice(firstTableIndex, 0, line, "");
+  }
+  fs.writeFileSync(filePath, `${next.join("\n").replace(/\n+$/, "")}\n`);
+}
+
+function upsertTomlPluginStatusLine(filePath, commandPath) {
+  let toml = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : "";
+  const table = '[plugins."linear-workflow-orchestrator@linear-workflow-orchestrator-marketplace".statusline]';
+  const block = [
+    table,
+    'type = "command"',
+    `command = ${tomlString(commandPath)}`,
+    'hyperlink = true',
+  ].join("\n");
+  const pattern = new RegExp(`\\n?\\[plugins\\."linear-workflow-orchestrator@linear-workflow-orchestrator-marketplace"\\.statusline\\][\\s\\S]*?(?=\\n\\[|$)`);
+  if (pattern.test(toml)) {
+    toml = toml.replace(pattern, `\n${block}`);
+  } else {
+    toml = `${toml.replace(/\n+$/, "")}\n\n${block}\n`;
+  }
+  fs.writeFileSync(filePath, `${toml.replace(/\n+$/, "")}\n`);
+}
+
+upsertTomlStatusLine(tomlPath, statuslineWrapperPath);
+upsertTomlPluginStatusLine(tomlPath, statuslineWrapperPath);
+
 console.log(`Installed local plugin metadata: ${plugin.name}@${plugin.marketplace}`);
 console.log(`Registered skill directory: ${skillRoot}`);
 console.log(`Installed skill: ${installedSkillPath}`);
+console.log(`Installed statusline command: ${statuslineWrapperPath}`);
 console.log(`Wrote ${configPath}`);
 console.log(`Updated ${tomlPath}`);

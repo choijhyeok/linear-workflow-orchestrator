@@ -148,16 +148,50 @@ test("authorization header preserves api key and bearer token", () => {
 test("preflight questions cover workspace credentials and goal mode", () => {
   const questions = preflightQuestions({ LINEAR_API_KEY: "key", LINEAR_TEAM_ID: "team" });
 
-  assert.deepEqual(questions.map((question) => question.id), ["execution_workspace", "linear_credentials", "goal_mode"]);
+  assert.deepEqual(questions.map((question) => question.id), ["execution_workspace", "linear_credentials", "goal_mode", "agent_limits"]);
   assert.equal(questions[1].options[0], "exported");
 });
 
 test("skill requires startup questions before repository work", () => {
   const skill = readFileSync(join(import.meta.dirname, "../plugins/linear-workflow-orchestrator/skills/linear-workflow-orchestrator/SKILL.md"), "utf8");
 
-  assert.match(skill, /Hard gate: ask these three questions before repository inspection/);
+  assert.match(skill, /Hard gate: ask these four questions before repository inspection/);
   assert.match(skill, /Do not infer or auto-select the answers/);
   assert.match(skill, /first assistant response for a new `\$linear-workflow-orchestrator` request must be only the startup-question prompt/);
+});
+
+test("record-preflight stores startup agent limits", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "lwo-preflight-limits-"));
+  const workflowPath = join(tempDir, "WORKFLOW.md");
+  const originalLog = console.log;
+  console.log = () => {};
+  writeFileSync(workflowPath, buildWorkflow("Build a Linear-managed Codex plugin", true, [], {
+    maxConcurrentAgents: 10,
+    maxTurns: 20,
+  }));
+
+  try {
+    await run([
+      "record-preflight",
+      workflowPath,
+      "--workspace",
+      "github",
+      "--credentials",
+      "exported",
+      "--goal-mode",
+      "on",
+      "--max-concurrent-agents",
+      "10",
+      "--max-turns",
+      "20",
+    ]);
+    const workflow = readFileSync(workflowPath, "utf8");
+    assert.match(workflow, /Max concurrent agents: 10/);
+    assert.match(workflow, /Max turns: 20/);
+  } finally {
+    console.log = originalLog;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 test("skill requires Linear handoff after dry-run or failed apply", () => {

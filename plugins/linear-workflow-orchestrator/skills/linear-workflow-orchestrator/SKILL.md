@@ -21,7 +21,7 @@ Goal mode bypass: when goal mode is on and the user has granted GitHub/Linear au
 
 ## Startup Questions
 
-Hard gate: ask these three questions before repository inspection, creating `workflow.md`, running `git`, running implementation commands, or doing external writes. Do not infer or auto-select the answers from the current directory, environment, or perceived user intent. If the user supplied one answer inline, ask only for the missing answers.
+Hard gate: ask these four questions before repository inspection, creating `workflow.md`, running `git`, running implementation commands, or doing external writes. Do not infer or auto-select the answers from the current directory, environment, or perceived user intent. If the user supplied one answer inline, ask only for the missing answers.
 
 1. Execution workspace:
    - GitHub issue branch flow: create one branch per Linear issue and push each branch/PR.
@@ -33,17 +33,21 @@ Hard gate: ask these three questions before repository inspection, creating `wor
 3. Goal mode:
    - on: continue discovering and registering follow-up workflow slices until the product is complete
    - off: stop after this workflow is complete
+4. Agent limits:
+   - `max_concurrent_agents`: maximum Linear issues the terminal TUI may dispatch at once
+   - `max_turns`: per-issue Codex lane turn budget passed to the runner
 
 The first assistant response for a new `$linear-workflow-orchestrator` request must be only the startup-question prompt plus a short statement that no workflow work will start until those answers are recorded. Do not say that goal mode is off, Linear is local-only, or GitHub is unavailable unless the user explicitly answered that way.
 
 Suggested Korean prompt shape:
 
 ```text
-시작 전에 3가지만 정하겠습니다.
+시작 전에 4가지만 정하겠습니다.
 
 1. 실행 방식: GitHub issue branch / local worktree 중 무엇으로 할까요?
 2. Linear 인증: 이미 export됨 / env 파일 경로 제공 / 지금 입력 중 무엇인가요?
 3. goal mode: on / off 중 무엇으로 할까요?
+4. agent limit: max_concurrent_agents와 max_turns를 몇으로 할까요? 예: 10 agents / 20 turns
 ```
 
 ## Required User Inputs
@@ -93,7 +97,7 @@ This command creates `WORKFLOW.md`, records startup answers, resolves or creates
 3. Record startup answers before creating Linear issues or starting work:
 
 ```bash
-node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs record-preflight workflow.md --workspace github --credentials exported --goal-mode off
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs record-preflight workflow.md --workspace github --credentials exported --goal-mode off --max-concurrent-agents 10 --max-turns 20
 ```
 
 4. Include:
@@ -105,6 +109,7 @@ node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.m
      - `agent.max_turns`
      - `codex.command`
    - goal mode value
+   - agent limits from startup answers
    - GitHub/Linear authority checklist
    - credential sources without secret values
    - status model
@@ -192,7 +197,7 @@ node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.m
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs init "Build a Codex plugin" --goal-mode on --out workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs init "Build a Codex plugin" --goal-mode on --max-concurrent-agents 10 --max-turns 20 --out workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs preflight
-node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs record-preflight workflow.md --workspace github --credentials exported --goal-mode on
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs record-preflight workflow.md --workspace github --credentials exported --goal-mode on --max-concurrent-agents 10 --max-turns 20
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs resolve-linear workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs parse workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs sync-linear workflow.md --dry-run-out linear-issues.preview.json

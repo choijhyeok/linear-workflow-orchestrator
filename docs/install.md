@@ -107,6 +107,7 @@ At the start of a workflow, the skill should ask:
 - whether to use GitHub issue branches or local worktrees
 - whether Linear credentials are exported, stored in an env file, or supplied by the user
 - whether goal mode is on
+- what `max_concurrent_agents` and `max_turns` should be
 
 These questions are a hard startup gate. The skill should ask them before inspecting the target repository, creating `workflow.md`, or deciding that the project is local-only.
 

@@ -84,16 +84,27 @@ Every workflow starts with these statuses unless the user asks to add more:
 
 ## Workflow
 
-When the user explicitly asks for goal-mode automation and the three startup answers are already provided or recorded, prefer the helper's `goal` command over manual `init` + `record-preflight` + `sync-linear` plumbing:
+Goal-mode execution has two surfaces:
+
+- Codex CLI: asks the four startup questions, creates `WORKFLOW.md`, registers Linear backlog/project once, and handles user-facing review decisions.
+- Terminal TUI: owns the Linear execution queue after bootstrap. It claims Todo issues, moves them to In Progress, runs lanes up to `agent.max_concurrent_agents`, updates workpads, and keeps the dashboard visible.
+
+When the user explicitly asks for goal-mode automation and the four startup answers are already provided or recorded, use the helper's `goal` command instead of manual `init` + `record-preflight` + `sync-linear` plumbing:
 
 ```bash
-node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs goal "Build a Codex plugin" --apply --poll
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs goal "Build a Codex plugin" --apply --poll --repo-url https://github.com/OWNER/REPO.git --base-branch main --max-concurrent-agents 10 --max-turns 20
 ```
 
-This command creates `WORKFLOW.md`, records startup answers, resolves or creates the Linear project from `LINEAR_API_KEY`, registers backlog issues, promotes dependency-ready work to Todo, and optionally runs one Linear poll tick. Use `daemon WORKFLOW.md` after bootstrap when a continuous Linear-driven loop is desired.
+This command creates `WORKFLOW.md`, records startup answers, resolves or creates the Linear project from `LINEAR_API_KEY`, registers backlog issues, promotes dependency-ready work to Todo, and optionally runs one Linear poll tick. After bootstrap, instruct the user to run the terminal TUI:
+
+```bash
+~/.codex/bin/linear-workflow-orchestrator-tui
+```
+
+Do not replace the TUI with repeated Codex-side `set-status ... --apply-linear` calls. In goal mode those calls are only for explicit review/merge interventions, not routine progress.
 
 1. Restate the development goal and authority assumptions.
-2. Create or update `workflow.md` at the repository root.
+2. Create or update `workflow.md` at the repository root by running the helper `goal` or `init` command. Do not hand-write or manually patch the Symphony-style front matter unless repairing a helper bug; the helper owns `tracker`, `workspace`, `hooks`, `agent`, `github`, and `codex` metadata.
 3. Record startup answers before creating Linear issues or starting work:
 
 ```bash
@@ -107,6 +118,8 @@ node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.m
      - `hooks.after_create`
      - `agent.max_concurrent_agents`
      - `agent.max_turns`
+     - `github.repo_url`
+     - `github.base_branch`
      - `codex.command`
    - goal mode value
    - agent limits from startup answers
@@ -115,7 +128,9 @@ node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.m
    - status model
    - execution table with issue IDs, titles, lane type, dependencies, status, Linear issue, Branch/Worktree, and acceptance criteria
    - goal-mode continuation gate
-5. If Linear writes are authorized and credentials exist, run:
+5. In goal mode, if Linear writes are authorized and credentials exist, run the single bootstrap command `goal ... --apply --poll`. If Codex asks for network approval for that one bootstrap call, request it once. If approval is denied or the user wants zero Codex-side network prompts, stop and give the exact terminal command for the user to run outside Codex. Do not fall back to manual status-by-status mutation.
+
+For non-goal/manual mode only, if Linear writes are authorized and credentials exist, run:
 
 ```bash
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs sync-linear workflow.md --apply
@@ -140,24 +155,25 @@ If the user already supplied credentials in the conversation but they are not vi
 7. After Linear backlog registration, do not implement directly on `main`.
 8. Treat Linear as the execution queue, not a passive mirror:
    - Backlog issues are not implemented.
-   - Todo means queued and ready; move the selected issue to In Progress before implementation.
+   - Todo means queued and ready; the terminal TUI/poller moves selected issues to In Progress before implementation.
    - In Progress/Rework/Review/Merging issues must have exactly one active Linear comment containing `## Codex Workpad`.
    - The `## Codex Workpad` comment is the source of truth for plan, checklist, progress log, validation evidence, PR link, blockers, review findings, and handoff notes.
    - Update the same workpad comment throughout the run; do not scatter separate progress comments.
    - Do not mark a Linear-backed issue Done unless its workpad records completed acceptance criteria, validation evidence, and merge/PR outcome.
+   - In goal mode, do not ask the user whether to move routine implementation issues to Done; the execution/review/merge policy controls state transitions.
 9. Use the issue dependency graph:
    - run `ready` to identify Backlog/Todo issues whose dependencies are Done
    - run `wave` to identify dependency-ready parallel issues that can be assigned together
    - move only the selected ready issue or ready parallel wave into execution
    - for serial lanes, start one issue at a time
    - for parallel lanes, start all dependency-satisfied parallel siblings together when the user wants Symphony-style concurrent Codex work
-10. Select work before starting it:
+10. Manual mode only: select work before starting it:
 
 ```bash
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs select-issue workflow.md LWO-004
 ```
 
-11. For each started issue, run `start-issue` to record the branch/worktree, move it to In Progress, and create or update the Linear workpad when `--apply-linear` is used:
+11. Manual mode only: for each started issue, run `start-issue` to record the branch/worktree, move it to In Progress, and create or update the Linear workpad when `--apply-linear` is used:
 
 ```bash
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs start-issue workflow.md LWO-004 --mode github --checkout --apply-linear
@@ -166,7 +182,8 @@ node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.m
 
 12. For Symphony-style concurrent work:
    - prefer the unattended poller for goal mode execution:
-     - `run WORKFLOW.md` shows the dashboard and runs the Linear poller loop in one terminal
+     - `tui WORKFLOW.md` shows the dashboard and runs the Linear poller loop in one terminal
+     - `run WORKFLOW.md` is an alias for the same terminal operator loop
      - `poll WORKFLOW.md` runs one dispatch tick
      - `daemon WORKFLOW.md` keeps polling Linear on `polling.interval_ms`
    - the poller reads Linear issues from `tracker.project_slug`; the local `workflow.md` table is not the source of execution truth in this mode
@@ -182,7 +199,7 @@ node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.m
    - merge only after all parallel lane reviews pass
 13. Move implemented work to Review and use a different Codex agent/session as reviewer.
 14. Move review failures to Rework and keep the issue branch/worktree active until fixed.
-15. Move accepted work to Merging only after review passes; `set-status ... Merging` requires `--reviewed-by`.
+15. Move accepted work to Merging only after review passes; if a Codex-side Linear status update is needed here, it must be tied to an explicit review verdict, not a generic "should I mark Done?" prompt.
 16. Merge using the issue branch/PR or local worktree integration branch, never by committing unrelated completed work directly to `main`.
 17. Mark obsolete work as Canceled or Duplicate.
 18. Before claiming completion, audit all workflow acceptance criteria, Linear issue statuses, and the issue workpad.
@@ -193,9 +210,9 @@ node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.m
 The helper script can initialize a deterministic workflow template and parse/sync existing `workflow.md` files:
 
 ```bash
-node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs goal "Build a Codex plugin" --apply --poll
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs goal "Build a Codex plugin" --apply --poll --repo-url https://github.com/OWNER/REPO.git --base-branch main --max-concurrent-agents 10 --max-turns 20
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs init "Build a Codex plugin" --goal-mode on --out workflow.md
-node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs init "Build a Codex plugin" --goal-mode on --max-concurrent-agents 10 --max-turns 20 --out workflow.md
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs init "Build a Codex plugin" --goal-mode on --max-concurrent-agents 10 --max-turns 20 --repo-url https://github.com/OWNER/REPO.git --base-branch main --out workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs preflight
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs record-preflight workflow.md --workspace github --credentials exported --goal-mode on --max-concurrent-agents 10 --max-turns 20
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs resolve-linear workflow.md
@@ -220,7 +237,7 @@ node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.m
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs statusline workflow.md --hyperlink --linear-base-url https://linear.app/choijhyeok
 ```
 
-The agent should still refine `workflow.md` with domain-specific tasks before creating Linear issues. Active implementation must be selected with `select-issue` before `start-issue`. Once an issue reaches In Progress, update the Linear `## Codex Workpad` before and after meaningful implementation, validation, review, and merge steps.
+The agent should still refine the execution table with domain-specific tasks before creating Linear issues, but it must preserve helper-owned front matter. Active implementation must be selected with `select-issue` before `start-issue`. Once an issue reaches In Progress, update the Linear `## Codex Workpad` before and after meaningful implementation, validation, review, and merge steps.
 
 ## Terminal Status Line
 

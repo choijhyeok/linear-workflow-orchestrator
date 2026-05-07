@@ -30,7 +30,7 @@ Backlog, Todo, In Progress, Rework, Review, Merging, Done, Canceled, and Duplica
 ## Local CLI
 
 ```bash
-node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs goal "Build my feature" --apply --poll
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs goal "Build my feature" --apply --poll --repo-url https://github.com/OWNER/REPO.git --base-branch main
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs init "Build my feature" --goal-mode on --out workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs init "Build my feature" --goal-mode on --max-concurrent-agents 10 --max-turns 20 --out workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs preflight
@@ -60,7 +60,7 @@ node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.m
 
 `--apply` calls Linear's GraphQL API. Without `--apply`, the script only generates the payload that would be sent.
 
-Generated workflows include Symphony-style front matter for `tracker`, `workspace`, `hooks`, `agent`, and `codex`. `agent.max_concurrent_agents` limits how many ready parallel issues `wave` selects, and `agent.max_turns` is surfaced as the per-issue lane budget in the dashboard/workflow policy.
+Generated workflows include Symphony-style front matter for `tracker`, `workspace`, `hooks`, `agent`, `github`, and `codex`. When `--repo-url` is supplied, the generated `after_create` hook clones the repository and checks out the per-issue branch from `SYMPHONY_ISSUE_BRANCH`. `agent.max_concurrent_agents` limits how many ready parallel issues `wave` selects, and `agent.max_turns` is surfaced as the per-issue lane budget in the dashboard/workflow policy.
 
 In goal mode, the skill bypasses routine continuation prompts after startup authority is recorded. With `LINEAR_API_KEY` alone, `sync-linear --apply` can resolve the first visible Linear team and create a workflow project when no `LINEAR_PROJECT_URL` is provided.
 

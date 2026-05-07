@@ -16,12 +16,14 @@ import {
   parseWorkflow,
   parseWorkflowConfig,
   pollLinearOnce,
+  prepareWorkspace,
   preflightQuestions,
   projectIdFromUrl,
   branchNameForIssue,
   parallelWave,
   readyIssues,
   updateStartupAnswers,
+  updateWorkflowAgentConfig,
   updateWorkflowTrackerProject,
   updateWorkflowBranch,
   updateWorkflowLinearIssues,
@@ -58,12 +60,18 @@ test("workflow config parses agent concurrency and turn budget", () => {
   const config = parseWorkflowConfig(buildWorkflow("Build a Linear-managed Codex plugin", true, [], {
     maxConcurrentAgents: 10,
     maxTurns: 20,
+    repoUrl: "https://github.com/choijhyeok/test-work.git",
+    baseBranch: "main",
+    codexCommand: "codex app-server",
   }));
 
   assert.equal(config.tracker.kind, "linear");
   assert.equal(config.agent.max_concurrent_agents, 10);
   assert.equal(config.agent.max_turns, 20);
-  assert.match(config.codex.command, /codex exec/);
+  assert.equal(config.github.repo_url, "https://github.com/choijhyeok/test-work.git");
+  assert.equal(config.github.base_branch, "main");
+  assert.match(config.hooks.after_create, /SYMPHONY_ISSUE_BRANCH/);
+  assert.equal(config.codex.command, "codex app-server");
 });
 
 test("workflow config parses lists and hook block scalars", () => {
@@ -202,6 +210,14 @@ test("skill requires Linear handoff after dry-run or failed apply", () => {
   assert.match(skill, /Do not mark Linear-backed issues Done or present the workflow as fully complete while `Linear Issue` cells are empty/);
 });
 
+test("skill routes goal mode to terminal TUI instead of manual status prompts", () => {
+  const skill = readFileSync(join(import.meta.dirname, "../plugins/linear-workflow-orchestrator/skills/linear-workflow-orchestrator/SKILL.md"), "utf8");
+
+  assert.match(skill, /Terminal TUI: owns the Linear execution queue after bootstrap/);
+  assert.match(skill, /Do not replace the TUI with repeated Codex-side `set-status \.\.\. --apply-linear` calls/);
+  assert.match(skill, /do not ask the user whether to move routine implementation issues to Done/);
+});
+
 test("update workflow status changes matching row", () => {
   const workflow = buildWorkflow("Build a Linear-managed Codex plugin", true);
   const updated = updateWorkflowStatus(workflow, "LWO-004", "In Progress", "ABC-123");
@@ -233,6 +249,48 @@ test("update workflow tracker project records created project slug", () => {
   const updated = updateWorkflowTrackerProject(workflow, { slugId: "abc123" });
 
   assert.match(updated, /project_slug: "abc123"/);
+});
+
+test("record-preflight updates front matter agent limits", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "lwo-agent-config-"));
+  const workflowPath = join(tempDir, "WORKFLOW.md");
+  writeFileSync(workflowPath, buildWorkflow("Build a Linear-managed Codex plugin", true));
+  const originalLog = console.log;
+  console.log = () => {};
+
+  try {
+    await run([
+      "record-preflight",
+      workflowPath,
+      "--workspace",
+      "github",
+      "--credentials",
+      "exported",
+      "--goal-mode",
+      "on",
+      "--max-concurrent-agents",
+      "8",
+      "--max-turns",
+      "12",
+    ]);
+    const config = parseWorkflowConfig(readFileSync(workflowPath, "utf8"));
+    assert.equal(config.agent.max_concurrent_agents, 8);
+    assert.equal(config.agent.max_turns, 12);
+  } finally {
+    console.log = originalLog;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("update workflow agent config changes front matter limits", () => {
+  const updated = updateWorkflowAgentConfig(buildWorkflow("Build a Linear-managed Codex plugin", true), {
+    maxConcurrentAgents: 6,
+    maxTurns: 9,
+  });
+  const config = parseWorkflowConfig(updated);
+
+  assert.equal(config.agent.max_concurrent_agents, 6);
+  assert.equal(config.agent.max_turns, 9);
 });
 
 test("ready issues only include dependency-satisfied backlog or todo work", () => {
@@ -314,6 +372,31 @@ test("workpad body records issue acceptance and progress", () => {
   assert.match(body, /## Codex Workpad/);
   assert.match(body, /Bookmark commands are tested/);
   assert.match(body, /issue\/how-76-bookmarks/);
+});
+
+test("prepare workspace exposes issue branch env to hooks", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "lwo-hook-env-"));
+  const config = {
+    workspace: { root: join(tempDir, "workspaces") },
+    github: { repo_url: "https://github.com/acme/example.git", base_branch: "main" },
+    hooks: {
+      after_create: "printf '%s\\n%s\\n%s\\n' \"$SYMPHONY_ISSUE_BRANCH\" \"$SYMPHONY_BASE_BRANCH\" \"$SYMPHONY_REPO_URL\" > hook-env.txt",
+    },
+  };
+
+  try {
+    const workspace = prepareWorkspace(config, {
+      id: "issue-id",
+      identifier: "ABC-123",
+      title: "Build bookmark CLI",
+    }, { workflowDir: tempDir });
+    const output = readFileSync(join(workspace.path, "hook-env.txt"), "utf8");
+    assert.match(output, /issue\/abc-123-build-bookmark-cli/);
+    assert.match(output, /main/);
+    assert.match(output, /https:\/\/github\.com\/acme\/example\.git/);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 test("dashboard summarizes active workflow issues", () => {

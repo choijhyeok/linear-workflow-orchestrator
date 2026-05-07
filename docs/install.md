@@ -75,7 +75,7 @@ Invoke the workflow skill with `$linear-workflow-orchestrator <development goal>
 For goal-mode automation from a shell, use the `goal` helper:
 
 ```bash
-LINEAR_API_KEY=... node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs goal "Build bookmark CLI" --apply --poll
+LINEAR_API_KEY=... node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs goal "Build bookmark CLI" --apply --poll --repo-url https://github.com/OWNER/REPO.git --base-branch main
 ```
 
 This creates `WORKFLOW.md`, records goal mode, creates or resolves the Linear project, registers backlog issues, promotes ready work to Todo, and runs one Linear poll tick. Start `tui WORKFLOW.md` when you want the continuous dashboard + Linear-driven terminal TUI, or `daemon WORKFLOW.md` when you only want JSON polling output.
@@ -93,6 +93,8 @@ agent:
 codex:
   command: codex app-server
 ```
+
+The helper owns this front matter. Do not manually recreate it; pass `--repo-url`, `--workspace-root`, `--base-branch`, `--codex-command`, `--max-concurrent-agents`, and `--max-turns` to the helper when those values need to change.
 
 `wave` respects `agent.max_concurrent_agents` when selecting parallel work. `dashboard` shows the active/max agent count and turn budget. The plugin records `max_turns` as orchestration policy; enforcing actual Codex process termination still depends on the host runner.
 

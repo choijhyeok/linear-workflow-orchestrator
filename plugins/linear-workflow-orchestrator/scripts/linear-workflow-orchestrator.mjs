@@ -55,6 +55,17 @@ function formatIssueRow(issue) {
 export function buildWorkflow(goal, goalMode, extraStatuses = [], options = {}) {
   const maxConcurrentAgents = Number(options.maxConcurrentAgents ?? 3);
   const maxTurns = Number(options.maxTurns ?? 20);
+  const workspaceRoot = options.workspaceRoot ?? "~/code/workspaces";
+  const repoUrl = options.repoUrl ?? "";
+  const baseBranch = options.baseBranch ?? "main";
+  const codexCommand = options.codexCommand ?? "codex exec --dangerously-bypass-approvals-and-sandbox \"$SYMPHONY_ISSUE_PROMPT\"";
+  const afterCreate = repoUrl
+    ? [
+      "    git clone \"$SYMPHONY_REPO_URL\" .",
+      "    git fetch origin",
+      "    git checkout -B \"$SYMPHONY_ISSUE_BRANCH\" \"origin/$SYMPHONY_BASE_BRANCH\"",
+    ]
+    : ["    # Optional: git clone git@github.com:your-org/your-repo.git ."];
   const statusRows = [
     ...DEFAULT_STATUSES,
     ...extraStatuses.map((status) => [status, "User-defined status."]),
@@ -118,15 +129,18 @@ export function buildWorkflow(goal, goalMode, extraStatuses = [], options = {}) 
     "  kind: linear",
     "  project_slug: pending",
     "workspace:",
-    "  root: ~/code/workspaces",
+    `  root: ${workspaceRoot}`,
     "hooks:",
     "  after_create: |",
-    "    # Optional: git clone git@github.com:your-org/your-repo.git .",
+    ...afterCreate,
     "agent:",
     `  max_concurrent_agents: ${maxConcurrentAgents}`,
     `  max_turns: ${maxTurns}`,
+    "github:",
+    `  repo_url: ${repoUrl || "pending"}`,
+    `  base_branch: ${baseBranch}`,
     "codex:",
-    "  command: codex exec --dangerously-bypass-approvals-and-sandbox \"$SYMPHONY_ISSUE_PROMPT\"",
+    `  command: ${codexCommand}`,
     "---",
     "",
     `# Workflow: ${slugTitle(goal)}`,
@@ -185,6 +199,7 @@ export function parseWorkflowConfig(markdown) {
     workspace: { root: "~/code/workspaces" },
     hooks: {},
     agent: { max_concurrent_agents: 3, max_turns: 20, max_retry_backoff_ms: 300000 },
+    github: { repo_url: "", base_branch: "main" },
     codex: { command: "codex exec --dangerously-bypass-approvals-and-sandbox \"$SYMPHONY_ISSUE_PROMPT\"" },
   };
   if (!markdown.startsWith("---\n")) return config;
@@ -441,6 +456,27 @@ export function updateWorkflowTrackerProject(markdown, project) {
     const trackerIndex = updated.findIndex((line) => /^tracker:\s*$/.test(line));
     if (trackerIndex !== -1) updated.splice(trackerIndex + 1, 0, `  project_slug: "${project.slugId}"`);
   }
+  return `${updated.join("\n")}${rest}`;
+}
+
+export function updateWorkflowAgentConfig(markdown, options = {}) {
+  if (!markdown.startsWith("---\n")) return markdown;
+  const end = markdown.indexOf("\n---", 4);
+  if (end === -1) return markdown;
+  const frontMatter = markdown.slice(0, end);
+  const rest = markdown.slice(end);
+  let section = "";
+  const updated = frontMatter.split(/\r?\n/).map((line) => {
+    const sectionMatch = line.match(/^([A-Za-z_][A-Za-z0-9_-]*):\s*$/);
+    if (sectionMatch) section = sectionMatch[1];
+    if (section === "agent" && /^\s+max_concurrent_agents:\s*/.test(line) && options.maxConcurrentAgents) {
+      return `  max_concurrent_agents: ${options.maxConcurrentAgents}`;
+    }
+    if (section === "agent" && /^\s+max_turns:\s*/.test(line) && options.maxTurns) {
+      return `  max_turns: ${options.maxTurns}`;
+    }
+    return line;
+  });
   return `${updated.join("\n")}${rest}`;
 }
 
@@ -876,6 +912,32 @@ export function workspacePathForIssue(config, issue, baseDir = process.cwd()) {
   return path.join(expandLocalPath(config.workspace.root, baseDir), workspaceKey(issue.identifier));
 }
 
+function issueRuntimeEnv(config, issue, extraEnv = {}) {
+  const branchName = branchNameForIssue({
+    key: issue.identifier,
+    linearIssue: issue.identifier,
+    title: issue.title,
+  });
+  const baseBranch = config.github?.base_branch && config.github.base_branch !== "pending"
+    ? config.github.base_branch
+    : "main";
+  const repoUrl = config.github?.repo_url && config.github.repo_url !== "pending"
+    ? config.github.repo_url
+    : "";
+  return {
+    ...process.env,
+    ...extraEnv,
+    SYMPHONY_ISSUE_ID: issue.id ?? "",
+    SYMPHONY_ISSUE_IDENTIFIER: issue.identifier ?? "",
+    SYMPHONY_ISSUE_BRANCH: branchName,
+    SYMPHONY_BASE_BRANCH: baseBranch,
+    SYMPHONY_REPO_URL: repoUrl,
+    LWO_ISSUE_BRANCH: branchName,
+    LWO_BASE_BRANCH: baseBranch,
+    LWO_REPO_URL: repoUrl,
+  };
+}
+
 export function renderIssuePrompt(template, issue, attempt = null) {
   let rendered = template || "You are working on Linear issue {{ issue.identifier }}.";
   rendered = rendered.replace(/{%\s*if\s+attempt\s*%}([\s\S]*?){%\s*endif\s*%}/g, attempt ? "$1" : "");
@@ -893,7 +955,11 @@ export function prepareWorkspace(config, issue, options = {}) {
   const createdNow = !fs.existsSync(workspacePath);
   fs.mkdirSync(workspacePath, { recursive: true });
   if (createdNow && config.hooks.after_create && !options.skipHooks) {
-    execFileSync("sh", ["-lc", config.hooks.after_create], { cwd: workspacePath, stdio: "inherit", env: process.env });
+    execFileSync("sh", ["-lc", config.hooks.after_create], {
+      cwd: workspacePath,
+      stdio: "inherit",
+      env: issueRuntimeEnv(config, issue, options.env),
+    });
   }
   return { path: workspacePath, createdNow };
 }
@@ -937,7 +1003,8 @@ export async function dispatchLinearIssue(apiKey, workflowMarkdown, issue, optio
     result.linear = await updateLinearIssueStatus(apiKey, issue.id, stateId);
     activeIssue.state = "In Progress";
   }
-  const workspace = prepareWorkspace(config, activeIssue, { workflowDir, skipHooks: options.skipHooks });
+  const env = issueRuntimeEnv(config, activeIssue, { LINEAR_API_KEY: apiKey });
+  const workspace = prepareWorkspace(config, activeIssue, { workflowDir, skipHooks: options.skipHooks, env });
   result.workspace = workspace.path;
   const workpadIssue = {
     key: activeIssue.identifier,
@@ -948,7 +1015,6 @@ export async function dispatchLinearIssue(apiKey, workflowMarkdown, issue, optio
     branch: workspace.path,
     note: `Claimed by poller in ${workspace.path}.`,
   });
-  const env = { ...process.env, LINEAR_API_KEY: apiKey, SYMPHONY_ISSUE_ID: activeIssue.id, SYMPHONY_ISSUE_IDENTIFIER: activeIssue.identifier };
   if (!options.skipHooks) runHook(config.hooks.before_run, workspace.path, env);
   const prompt = renderIssuePrompt(workflowPromptTemplate(workflowMarkdown), activeIssue, options.attempt ?? null);
   result.agent = await runAgentCommand(config.codex.command, workspace.path, prompt, env, {
@@ -1132,6 +1198,10 @@ export async function run(argv) {
     fs.writeFileSync(workflow, buildWorkflow(goal, true, [], {
       maxConcurrentAgents: options["max-concurrent-agents"],
       maxTurns: options["max-turns"],
+      workspaceRoot: options["workspace-root"],
+      repoUrl: options["repo-url"],
+      baseBranch: options["base-branch"],
+      codexCommand: options["codex-command"],
     }), "utf8");
     fs.writeFileSync(workflow, updateStartupAnswers(fs.readFileSync(workflow, "utf8"), {
       workspace: options.workspace ?? "github",
@@ -1161,6 +1231,10 @@ export async function run(argv) {
     fs.writeFileSync(options.out ?? "workflow.md", buildWorkflow(goal, parseBool(options["goal-mode"] ?? "off"), [], {
       maxConcurrentAgents: options["max-concurrent-agents"],
       maxTurns: options["max-turns"],
+      workspaceRoot: options["workspace-root"],
+      repoUrl: options["repo-url"],
+      baseBranch: options["base-branch"],
+      codexCommand: options["codex-command"],
     }), "utf8");
     console.log(`wrote ${options.out ?? "workflow.md"}`);
     return;
@@ -1186,7 +1260,8 @@ export async function run(argv) {
     parseBool(goalMode);
     if (!Number.isInteger(maxConcurrentAgents) || maxConcurrentAgents < 1) throw new Error("--max-concurrent-agents must be a positive integer");
     if (!Number.isInteger(maxTurns) || maxTurns < 1) throw new Error("--max-turns must be a positive integer");
-    const updated = updateStartupAnswers(fs.readFileSync(workflow, "utf8"), { workspace, credentials, goalMode, maxConcurrentAgents, maxTurns });
+    let updated = updateStartupAnswers(fs.readFileSync(workflow, "utf8"), { workspace, credentials, goalMode, maxConcurrentAgents, maxTurns });
+    updated = updateWorkflowAgentConfig(updated, { maxConcurrentAgents, maxTurns });
     fs.writeFileSync(workflow, updated, "utf8");
     console.log(JSON.stringify({ workflow, workspace, credentials, goalMode, maxConcurrentAgents, maxTurns }, null, 2));
     return;

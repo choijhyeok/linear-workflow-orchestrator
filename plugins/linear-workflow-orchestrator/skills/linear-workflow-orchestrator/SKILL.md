@@ -152,6 +152,11 @@ node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.m
 ```
 
 12. For Symphony-style concurrent work:
+   - prefer the unattended poller for goal mode execution:
+     - `poll WORKFLOW.md` runs one dispatch tick
+     - `daemon WORKFLOW.md` keeps polling Linear on `polling.interval_ms`
+   - the poller reads Linear issues from `tracker.project_slug`; the local `workflow.md` table is not the source of execution truth in this mode
+   - the poller claims `Todo` issues by moving them to `In Progress`, creates/reuses `workspace.root/<issue-id>`, updates the Linear `## Codex Workpad`, and executes `codex.command` inside that workspace
    - read `agent.max_concurrent_agents` from `workflow.md` before dispatch
    - assign each ready parallel issue to a separate Codex session/subagent/worktree, but never exceed `agent.max_concurrent_agents`
    - treat `agent.max_turns` as the per-issue Codex lane turn budget; if the lane reaches it before completion, update the workpad with a blocker/handoff rather than silently continuing
@@ -182,6 +187,8 @@ node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.m
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs ready workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs wave workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs dashboard workflow.md
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs poll WORKFLOW.md
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs daemon WORKFLOW.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs select-issue workflow.md LWO-004
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs start-issue workflow.md LWO-004 --mode github --checkout --apply-linear
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs start-issue workflow.md LWO-004 --mode worktree --worktree-dir ../project-HOW-76 --checkout --apply-linear

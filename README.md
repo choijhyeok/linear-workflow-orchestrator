@@ -48,6 +48,8 @@ LINEAR_API_KEY=... LINEAR_TEAM_ID=... node plugins/linear-workflow-orchestrator/
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs statusline workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs statusline workflow.md --hyperlink --linear-base-url https://linear.app/choijhyeok
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs dashboard workflow.md
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs poll WORKFLOW.md
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs daemon WORKFLOW.md
 ```
 
 `--apply` calls Linear's GraphQL API. Without `--apply`, the script only generates the payload that would be sent.
@@ -55,6 +57,8 @@ node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.m
 Generated workflows include Symphony-style front matter for `tracker`, `workspace`, `hooks`, `agent`, and `codex`. `agent.max_concurrent_agents` limits how many ready parallel issues `wave` selects, and `agent.max_turns` is surfaced as the per-issue lane budget in the dashboard/workflow policy.
 
 In goal mode, the skill bypasses routine continuation prompts after startup authority is recorded. With `LINEAR_API_KEY` alone, `sync-linear --apply` can resolve the first visible Linear team and create a workflow project when no `LINEAR_PROJECT_URL` is provided.
+
+For unattended Symphony-style operation, use `poll` for one dispatch tick or `daemon` for a continuous polling loop. These commands read Linear candidate issues from `tracker.project_slug`, claim eligible `Todo` work by moving it to `In Progress`, create/reuse the issue workspace under `workspace.root`, run configured hooks, update the Linear `## Codex Workpad`, and execute `codex.command` inside that per-issue workspace. The generated default `codex.command` uses non-interactive `codex exec` with bypass mode; customize it in `WORKFLOW.md` if your trust model requires different flags.
 
 ## Status Line
 

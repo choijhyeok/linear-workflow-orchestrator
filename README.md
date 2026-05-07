@@ -102,6 +102,8 @@ codex plugin marketplace add /Users/jaehyeokchoi/Desktop/linear-workflow-orchest
 npm run install:local
 ```
 
+`install:local` also installs `~/.codex/bin/linear-workflow-orchestrator-statusline` and registers it in Codex config as the plugin statusline command. When the host supports command-backed status lines, active Linear workflow issues are shown automatically from the current `workflow.md`.
+
 ## Dogfood Example
 
 `examples/bookmark-cli` is a small real CLI used to dogfood this plugin's Linear-to-GitHub workflow. It supports:

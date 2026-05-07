@@ -51,6 +51,14 @@ npm run install:local
 
 This writes `~/.codex/config.json`.
 
+It also installs:
+
+```text
+~/.codex/bin/linear-workflow-orchestrator-statusline
+```
+
+and registers that command in `~/.codex/config.toml`/`config.json` so command-backed Codex or OMX HUD hosts can show the active Linear issue automatically. The wrapper reads `workflow.md` from the current directory and uses `LINEAR_PROJECT_URL` or `LINEAR_WORKSPACE_URL` for clickable Linear issue links.
+
 ## Runtime
 
 The plugin uses Node.js standard library only. There is no Python package, no npm dependency install, and no build step.
@@ -88,10 +96,10 @@ node --test tests/*.test.mjs
 
 ## Status Line
 
-Plugin installation exposes the status-line helper script, but native TUI status-line registration is still owned by the host Codex/OMX setup:
+Plugin installation exposes and registers the status-line helper script:
 
 ```bash
-node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs statusline workflow.md
+~/.codex/bin/linear-workflow-orchestrator-statusline
 ```
 
 See `docs/statusline.md`.

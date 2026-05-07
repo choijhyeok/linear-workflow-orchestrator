@@ -92,10 +92,10 @@ Goal-mode execution has two surfaces:
 When the user explicitly asks for goal-mode automation and the four startup answers are already provided or recorded, use the helper's `goal` command instead of manual `init` + `record-preflight` + `sync-linear` plumbing:
 
 ```bash
-node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs goal "Build a Codex plugin" --apply --poll --repo-url https://github.com/OWNER/REPO.git --base-branch main --max-concurrent-agents 10 --max-turns 20
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs goal "Build a Codex plugin" --apply --open-tui --repo-url https://github.com/OWNER/REPO.git --base-branch main --max-concurrent-agents 10 --max-turns 20
 ```
 
-This command creates `WORKFLOW.md`, records startup answers, resolves or creates the Linear project from `LINEAR_API_KEY`, registers backlog issues, promotes dependency-ready work to Todo, and optionally runs one Linear poll tick. After bootstrap, instruct the user to run the terminal TUI:
+This command creates `WORKFLOW.md`, records startup answers, resolves or creates the Linear project from `LINEAR_API_KEY`, registers backlog issues, promotes dependency-ready work to Todo, writes a private runtime env file when needed, and opens the terminal TUI. If the host blocks opening a GUI terminal, instruct the user to run the terminal TUI:
 
 ```bash
 ~/.codex/bin/linear-workflow-orchestrator-tui
@@ -128,7 +128,7 @@ node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.m
    - status model
    - execution table with issue IDs, titles, lane type, dependencies, status, Linear issue, Branch/Worktree, and acceptance criteria
    - goal-mode continuation gate
-5. In goal mode, if Linear writes are authorized and credentials exist, run the single bootstrap command `goal ... --apply --poll`. If Codex asks for network approval for that one bootstrap call, request it once. If approval is denied or the user wants zero Codex-side network prompts, stop and give the exact terminal command for the user to run outside Codex. Do not fall back to manual status-by-status mutation.
+5. In goal mode, if Linear writes are authorized and credentials exist, run the single bootstrap command `goal ... --apply --open-tui`. If Codex asks for network or GUI-terminal approval for that one bootstrap call, request it once. If approval is denied or the user wants zero Codex-side prompts, stop and give the exact terminal command for the user to run outside Codex. Do not fall back to manual status-by-status mutation or same-session implementation.
 
 For non-goal/manual mode only, if Linear writes are authorized and credentials exist, run:
 
@@ -210,7 +210,7 @@ node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.m
 The helper script can initialize a deterministic workflow template and parse/sync existing `workflow.md` files:
 
 ```bash
-node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs goal "Build a Codex plugin" --apply --poll --repo-url https://github.com/OWNER/REPO.git --base-branch main --max-concurrent-agents 10 --max-turns 20
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs goal "Build a Codex plugin" --apply --open-tui --repo-url https://github.com/OWNER/REPO.git --base-branch main --max-concurrent-agents 10 --max-turns 20
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs init "Build a Codex plugin" --goal-mode on --out workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs init "Build a Codex plugin" --goal-mode on --max-concurrent-agents 10 --max-turns 20 --repo-url https://github.com/OWNER/REPO.git --base-branch main --out workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs preflight
@@ -224,6 +224,7 @@ node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.m
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs dashboard WORKFLOW.md --watch
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs run WORKFLOW.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs tui WORKFLOW.md
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs open-tui WORKFLOW.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs poll WORKFLOW.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs daemon WORKFLOW.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs select-issue workflow.md LWO-004

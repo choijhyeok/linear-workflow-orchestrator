@@ -1239,7 +1239,7 @@ function parseOptions(args) {
       continue;
     }
     const key = arg.slice(2);
-    if (["apply", "apply-linear", "checkout", "local-only", "hyperlink", "once", "dry-run-agent", "skip-hooks", "poll", "daemon", "watch", "no-clear"].includes(key)) {
+    if (["apply", "apply-linear", "checkout", "local-only", "hyperlink", "once", "dry-run-agent", "skip-hooks", "poll", "daemon", "watch", "no-clear", "open-tui"].includes(key)) {
       values[key] = true;
     } else {
       values[key] = args[index + 1];
@@ -1247,6 +1247,89 @@ function parseOptions(args) {
     }
   }
   return values;
+}
+
+function parseEnvFileLine(line) {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.startsWith("#")) return null;
+  const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+  if (!match) return null;
+  let value = match[2].trim();
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    value = value.slice(1, -1);
+  }
+  return [match[1], value];
+}
+
+export function loadEnvFile(filePath, env = process.env) {
+  const resolved = path.resolve(filePath);
+  for (const line of fs.readFileSync(resolved, "utf8").split(/\r?\n/)) {
+    const parsed = parseEnvFileLine(line);
+    if (parsed) env[parsed[0]] = parsed[1];
+  }
+  return resolved;
+}
+
+function runtimeEnvDirectory(options = {}) {
+  return options.directory ?? process.env.LWO_RUNTIME_ENV_DIR ?? path.join(os.homedir(), ".codex", "linear-workflow-orchestrator", "env");
+}
+
+export function writeRuntimeEnvFile(env = process.env, options = {}) {
+  const keys = ["LINEAR_API_KEY", "LINEAR_TEAM_ID", "LINEAR_PROJECT_URL", "LINEAR_WORKSPACE_URL"];
+  const lines = [];
+  for (const key of keys) {
+    if (env[key]) lines.push(`${key}=${JSON.stringify(env[key])}`);
+  }
+  if (!lines.length) return null;
+  const directory = runtimeEnvDirectory(options);
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const filePath = path.join(directory, `session-${Date.now()}-${process.pid}.env`);
+  fs.writeFileSync(filePath, `${lines.join("\n")}\n`, { mode: 0o600 });
+  fs.chmodSync(filePath, 0o600);
+  return filePath;
+}
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
+function appleScriptQuote(value) {
+  return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+export function buildTuiLaunchCommand(workflow, options = {}) {
+  const helper = options.helperPath ?? path.resolve(new URL(import.meta.url).pathname);
+  const args = ["tui", path.resolve(workflow)];
+  if (options["env-file"]) args.push("--env-file", path.resolve(options["env-file"]));
+  if (options["interval-ms"]) args.push("--interval-ms", String(options["interval-ms"]));
+  if (options["fetch-limit"]) args.push("--fetch-limit", String(options["fetch-limit"]));
+  return [
+    `cd ${shellQuote(process.cwd())}`,
+    ["node", shellQuote(helper), ...args.map(shellQuote)].join(" "),
+  ].join(" && ");
+}
+
+export function launchTerminalTui(workflow, options = {}) {
+  const command = buildTuiLaunchCommand(workflow, options);
+  if (process.platform === "darwin") {
+    execFileSync("osascript", [
+      "-e",
+      `tell application "Terminal" to do script "${appleScriptQuote(command)}"`,
+      "-e",
+      `tell application "Terminal" to activate`,
+    ], { stdio: "ignore" });
+    return { launched: true, platform: "darwin" };
+  }
+  const terminal = process.env.TERMINAL || "x-terminal-emulator";
+  const child = spawn(terminal, ["-e", "sh", "-lc", command], {
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+  return { launched: true, platform: process.platform, terminal };
 }
 
 function requireValue(value, message) {
@@ -1287,6 +1370,7 @@ export async function run(argv) {
   const [rawCommand, ...rest] = argv;
   const command = rawCommand ?? "statusline";
   const options = parseOptions(rest);
+  if (options["env-file"]) loadEnvFile(options["env-file"]);
   if (command === "goal") {
     const goal = requireValue(options._.join(" "), "goal is required");
     const workflow = options.out ?? "WORKFLOW.md";
@@ -1317,6 +1401,11 @@ export async function run(argv) {
       result.linear = { applied: true };
       result.promoted = await promoteReadyIssuesToTodo(workflow, options);
       if (options.poll || options.daemon) result.poll = await pollLinearOnce(workflow, options);
+    }
+    if (options["open-tui"]) {
+      const envFile = options["env-file"] ?? writeRuntimeEnvFile();
+      result.tui = launchTerminalTui(workflow, { ...options, "env-file": envFile });
+      if (envFile) result.tui.envFile = envFile;
     }
     console.log(JSON.stringify(result, null, 2));
     return;
@@ -1567,6 +1656,16 @@ export async function run(argv) {
       const interval = Number(options["interval-ms"] ?? config.polling.interval_ms ?? 30000);
       await sleep(interval);
     }
+  }
+  if (command === "open-tui") {
+    const workflow = options._[0] ?? "WORKFLOW.md";
+    const envFile = options["env-file"] ?? writeRuntimeEnvFile();
+    console.log(JSON.stringify({
+      workflow,
+      envFile,
+      ...launchTerminalTui(workflow, { ...options, "env-file": envFile }),
+    }, null, 2));
+    return;
   }
   if (command === "poll") {
     const workflow = options._[0] ?? "WORKFLOW.md";

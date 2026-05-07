@@ -6,6 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   authorizationHeader,
+  buildTuiLaunchCommand,
   buildIssueInputs,
   buildWorkflow,
   currentIssue,
@@ -13,6 +14,7 @@ import {
   formatStatusLine,
   initialWorkpadBody,
   linearIssueUrl,
+  loadEnvFile,
   parseWorkflow,
   parseWorkflowConfig,
   pollLinearOnce,
@@ -28,6 +30,7 @@ import {
   updateWorkflowBranch,
   updateWorkflowLinearIssues,
   updateWorkflowStatus,
+  writeRuntimeEnvFile,
   run,
 } from "../plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs";
 
@@ -229,6 +232,55 @@ test("skill routes goal mode to terminal TUI instead of manual status prompts", 
   assert.match(skill, /Terminal TUI: owns the Linear execution queue after bootstrap/);
   assert.match(skill, /Do not replace the TUI with repeated Codex-side `set-status \.\.\. --apply-linear` calls/);
   assert.match(skill, /do not ask the user whether to move routine implementation issues to Done/);
+  assert.match(skill, /--open-tui/);
+});
+
+test("env files can provide Linear credentials to a launched TUI", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "lwo-env-file-"));
+  const envPath = join(tempDir, ".linear.env");
+  const env = {};
+
+  try {
+    writeFileSync(envPath, [
+      "LINEAR_API_KEY=lin_api_test",
+      "LINEAR_TEAM_ID='team-123'",
+      'LINEAR_PROJECT_URL="https://linear.app/acme/project/example-abc/issues"',
+      "",
+    ].join("\n"));
+
+    const loaded = loadEnvFile(envPath, env);
+
+    assert.equal(loaded, envPath);
+    assert.equal(env.LINEAR_API_KEY, "lin_api_test");
+    assert.equal(env.LINEAR_TEAM_ID, "team-123");
+    assert.equal(env.LINEAR_PROJECT_URL, "https://linear.app/acme/project/example-abc/issues");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("runtime env files persist Linear values without printing secrets in launch commands", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "lwo-runtime-env-"));
+  const env = {
+    LINEAR_API_KEY: "lin_api_secret",
+    LINEAR_TEAM_ID: "team-123",
+  };
+
+  const envPath = writeRuntimeEnvFile(env, { directory: tempDir });
+
+  try {
+    assert.ok(envPath.endsWith(".env"));
+    const content = readFileSync(envPath, "utf8");
+    assert.match(content, /LINEAR_API_KEY="lin_api_secret"/);
+    assert.match(content, /LINEAR_TEAM_ID="team-123"/);
+
+    const command = buildTuiLaunchCommand("WORKFLOW.md", { "env-file": envPath });
+    assert.match(command, /linear-workflow-orchestrator\.mjs/);
+    assert.match(command, /--env-file/);
+    assert.doesNotMatch(command, /lin_api_secret/);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 test("update workflow status changes matching row", () => {

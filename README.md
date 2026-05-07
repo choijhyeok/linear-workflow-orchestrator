@@ -30,7 +30,7 @@ Backlog, Todo, In Progress, Rework, Review, Merging, Done, Canceled, and Duplica
 ## Local CLI
 
 ```bash
-node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs goal "Build my feature" --apply --poll --repo-url https://github.com/OWNER/REPO.git --base-branch main
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs goal "Build my feature" --apply --open-tui --repo-url https://github.com/OWNER/REPO.git --base-branch main
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs init "Build my feature" --goal-mode on --out workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs init "Build my feature" --goal-mode on --max-concurrent-agents 10 --max-turns 20 --out workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs preflight
@@ -52,11 +52,12 @@ node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.m
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs dashboard WORKFLOW.md --watch
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs run WORKFLOW.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs tui WORKFLOW.md
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs open-tui WORKFLOW.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs poll WORKFLOW.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs daemon WORKFLOW.md
 ```
 
-`goal` is the friendlier Symphony-style bootstrap path. It writes `WORKFLOW.md`, records goal-mode startup answers, creates or resolves the Linear project from `LINEAR_API_KEY`, registers backlog issues, promotes dependency-ready work to Todo, and optionally runs one poll tick with `--poll`. Use `daemon WORKFLOW.md` after bootstrap for a continuous Linear-driven loop.
+`goal` is the friendlier Symphony-style bootstrap path. It writes `WORKFLOW.md`, records goal-mode startup answers, creates or resolves the Linear project from `LINEAR_API_KEY`, registers backlog issues, promotes dependency-ready work to Todo, and can open the terminal operator with `--open-tui`. Use `daemon WORKFLOW.md` after bootstrap for a continuous Linear-driven loop.
 
 `--apply` calls Linear's GraphQL API. Without `--apply`, the script only generates the payload that would be sent.
 
@@ -64,7 +65,7 @@ Generated workflows include Symphony-style front matter for `tracker`, `workspac
 
 In goal mode, the skill bypasses routine continuation prompts after startup authority is recorded. With `LINEAR_API_KEY` alone, `sync-linear --apply` can resolve the first visible Linear team and create a workflow project when no `LINEAR_PROJECT_URL` is provided.
 
-For unattended Symphony-style operation, use `tui WORKFLOW.md` for one combined terminal TUI + polling operator screen, `poll` for one dispatch tick, or `daemon` for a continuous polling loop. These commands read Linear candidate issues from `tracker.project_slug`, claim eligible `Todo` work by moving it to `In Progress`, create/reuse the issue workspace under `workspace.root`, run configured hooks, update the Linear `## Codex Workpad`, and execute `codex.command` inside that per-issue workspace. The poller dispatches up to `agent.max_concurrent_agents` issues concurrently and passes `agent.max_turns` through the agent environment as `SYMPHONY_MAX_TURNS`/`LWO_MAX_TURNS`. The generated default `codex.command` uses non-interactive `codex exec` with bypass mode; set `codex.command: codex app-server` or another command in `WORKFLOW.md` when that is the lane runner you want.
+For unattended Symphony-style operation, use `tui WORKFLOW.md` for one combined terminal TUI + polling operator screen, `open-tui WORKFLOW.md` to launch that screen in a new terminal, `poll` for one dispatch tick, or `daemon` for a continuous polling loop. These commands read Linear candidate issues from `tracker.project_slug`, claim eligible `Todo` work by moving it to `In Progress`, create/reuse the issue workspace under `workspace.root`, run configured hooks, update the Linear `## Codex Workpad`, and execute `codex.command` inside that per-issue workspace. The poller dispatches up to `agent.max_concurrent_agents` issues concurrently and passes `agent.max_turns` through the agent environment as `SYMPHONY_MAX_TURNS`/`LWO_MAX_TURNS`. The generated default `codex.command` uses non-interactive `codex exec` with bypass mode; set `codex.command: codex app-server` or another command in `WORKFLOW.md` when that is the lane runner you want.
 
 ## Status Line And Dashboard
 
@@ -89,6 +90,8 @@ For a larger Symphony-style terminal TUI in a new terminal, side pane, or termin
 ```
 
 This opens the refreshing dashboard and Linear poller loop for `WORKFLOW.md`. Use `~/.codex/bin/linear-workflow-orchestrator-dashboard --watch` when you only want the auto-refreshing dashboard without polling, or `~/.codex/bin/linear-workflow-orchestrator-run` as the older alias for the same combined operator loop.
+
+When `goal --open-tui` or `open-tui` launches a new terminal, exported environment variables from the current shell may not be inherited by macOS Terminal. The helper writes only the required Linear variables to a private `0600` env file under `~/.codex/linear-workflow-orchestrator/env/` and passes that file path to the TUI; secret values are not printed in the launch command.
 
 Current Codex TUI builds own the composer/status-line rendering and do not execute arbitrary plugin dashboard commands under the composer, so the plugin cannot force Symphony-style rows to appear below the prompt by itself. In a separate terminal, this is just a normal terminal TUI and does not depend on Codex TUI support.
 

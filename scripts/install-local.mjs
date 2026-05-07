@@ -11,6 +11,7 @@ const installedSkillRoot = path.join(os.homedir(), ".codex", "skills", "linear-w
 const installedSkillPath = path.join(installedSkillRoot, "SKILL.md");
 const installedBinRoot = path.join(os.homedir(), ".codex", "bin");
 const statuslineWrapperPath = path.join(installedBinRoot, "linear-workflow-orchestrator-statusline");
+const dashboardWrapperPath = path.join(installedBinRoot, "linear-workflow-orchestrator-dashboard");
 const helperPath = path.join(pluginRoot, "scripts", "linear-workflow-orchestrator.mjs");
 const configPath = path.join(os.homedir(), ".codex", "config.json");
 const tomlPath = path.join(os.homedir(), ".codex", "config.toml");
@@ -59,6 +60,11 @@ config.statusLineCommands = {
     description: "Show the active Linear workflow issue from workflow.md with terminal hyperlinks when supported.",
     source: plugin.name,
   },
+  "linear-workflow-orchestrator-dashboard": {
+    command: dashboardWrapperPath,
+    description: "Show a Symphony-lite multiline dashboard for workflow.md when the host supports command-backed HUD panels.",
+    source: plugin.name,
+  },
 };
 
 if (!config.statusLine || config.statusLine.source === plugin.name) {
@@ -91,6 +97,17 @@ const statuslineWrapper = [
 ].join("\n");
 fs.writeFileSync(statuslineWrapperPath, statuslineWrapper, { mode: 0o755 });
 fs.chmodSync(statuslineWrapperPath, 0o755);
+const dashboardWrapper = [
+  "#!/bin/sh",
+  "set -eu",
+  'if [ "$#" -eq 0 ]; then',
+  "  set -- workflow.md",
+  "fi",
+  `exec node "${helperPath.replace(/"/g, '\\"')}" dashboard "$@"`,
+  "",
+].join("\n");
+fs.writeFileSync(dashboardWrapperPath, dashboardWrapper, { mode: 0o755 });
+fs.chmodSync(dashboardWrapperPath, 0o755);
 
 function upsertTomlSkillDirectory(filePath, directory) {
   const escaped = directory.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -172,12 +189,32 @@ function upsertTomlPluginStatusLine(filePath, commandPath) {
   fs.writeFileSync(filePath, `${toml.replace(/\n+$/, "")}\n`);
 }
 
+function upsertTomlPluginDashboard(filePath, commandPath) {
+  let toml = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : "";
+  const table = '[plugins."linear-workflow-orchestrator@linear-workflow-orchestrator-marketplace".dashboard]';
+  const block = [
+    table,
+    'type = "command"',
+    `command = ${tomlString(commandPath)}`,
+    'multiline = true',
+  ].join("\n");
+  const pattern = new RegExp(`\\n?\\[plugins\\."linear-workflow-orchestrator@linear-workflow-orchestrator-marketplace"\\.dashboard\\][\\s\\S]*?(?=\\n\\[|$)`);
+  if (pattern.test(toml)) {
+    toml = toml.replace(pattern, `\n${block}`);
+  } else {
+    toml = `${toml.replace(/\n+$/, "")}\n\n${block}\n`;
+  }
+  fs.writeFileSync(filePath, `${toml.replace(/\n+$/, "")}\n`);
+}
+
 upsertTomlStatusLine(tomlPath, statuslineWrapperPath);
 upsertTomlPluginStatusLine(tomlPath, statuslineWrapperPath);
+upsertTomlPluginDashboard(tomlPath, dashboardWrapperPath);
 
 console.log(`Installed local plugin metadata: ${plugin.name}@${plugin.marketplace}`);
 console.log(`Registered skill directory: ${skillRoot}`);
 console.log(`Installed skill: ${installedSkillPath}`);
 console.log(`Installed statusline command: ${statuslineWrapperPath}`);
+console.log(`Installed dashboard command: ${dashboardWrapperPath}`);
 console.log(`Wrote ${configPath}`);
 console.log(`Updated ${tomlPath}`);

@@ -9,9 +9,12 @@ import {
   buildIssueInputs,
   buildWorkflow,
   currentIssue,
+  formatDashboard,
   formatStatusLine,
+  initialWorkpadBody,
   linearIssueUrl,
   parseWorkflow,
+  parseWorkflowConfig,
   preflightQuestions,
   projectIdFromUrl,
   branchNameForIssue,
@@ -46,6 +49,19 @@ test("build and parse workflow round trip", () => {
   assert.deepEqual(issues[1].dependsOn, ["LWO-001"]);
   assert.match(workflow, /Goal mode: on/);
   assert.match(workflow, /Branch\/Worktree/);
+  assert.match(workflow, /agent:\n  max_concurrent_agents: 3\n  max_turns: 20/);
+});
+
+test("workflow config parses agent concurrency and turn budget", () => {
+  const config = parseWorkflowConfig(buildWorkflow("Build a Linear-managed Codex plugin", true, [], {
+    maxConcurrentAgents: 10,
+    maxTurns: 20,
+  }));
+
+  assert.equal(config.tracker.kind, "linear");
+  assert.equal(config.agent.max_concurrent_agents, 10);
+  assert.equal(config.agent.max_turns, 20);
+  assert.equal(config.codex.command, "codex app-server");
 });
 
 test("build issue inputs include dependencies and project uuid", () => {
@@ -175,6 +191,17 @@ test("parallel wave only includes dependency-ready parallel work", () => {
   assert.deepEqual(wave.map((issue) => issue.key), ["LWO-004"]);
 });
 
+test("parallel wave respects max concurrent agent capacity", () => {
+  const issues = [
+    { key: "A", lane: "parallel", status: "Backlog", dependsOn: [] },
+    { key: "B", lane: "parallel", status: "Backlog", dependsOn: [] },
+    { key: "C", lane: "parallel", status: "Backlog", dependsOn: [] },
+    { key: "D", lane: "serial", status: "In Progress", dependsOn: [] },
+  ];
+
+  assert.deepEqual(parallelWave(issues, { maxConcurrentAgents: 2 }).map((issue) => issue.key), ["A"]);
+});
+
 test("branch name uses Linear identifier when present", () => {
   assert.equal(
     branchNameForIssue({ key: "LWO-004", linearIssue: "HOW-76", title: "Build bookmark CLI example" }),
@@ -211,6 +238,38 @@ test("linear issue urls are derived from Linear project URLs", () => {
     linearIssueUrl({ linearIssue: "HOW-76" }, { projectUrl: "https://linear.app/choijhyeok/project/hanwha-project-5f527568b378/issues" }),
     "https://linear.app/choijhyeok/issue/HOW-76",
   );
+});
+
+test("workpad body records issue acceptance and progress", () => {
+  const body = initialWorkpadBody({
+    key: "LWO-004",
+    status: "In Progress",
+    acceptance: "Bookmark commands are tested.",
+  }, { branch: "issue/how-76-bookmarks", now: "2026-05-07T00:00:00.000Z" });
+
+  assert.match(body, /## Codex Workpad/);
+  assert.match(body, /Bookmark commands are tested/);
+  assert.match(body, /issue\/how-76-bookmarks/);
+});
+
+test("dashboard summarizes active workflow issues", () => {
+  const workflow = updateWorkflowStatus(
+    updateWorkflowStatus(buildWorkflow("Build a Linear-managed Codex plugin", true), "LWO-001", "Done"),
+    "LWO-002",
+    "In Progress",
+    "HOW-2",
+  );
+  const dashboard = formatDashboard(parseWorkflow(workflow), {
+    maxConcurrentAgents: 3,
+    maxTurns: 20,
+    projectUrl: "https://linear.app/acme/project/example/issues",
+    nextRefresh: "manual",
+  });
+
+  assert.match(dashboard, /SYMPHONY-LITE STATUS/);
+  assert.match(dashboard, /Agents: 1\/3/);
+  assert.match(dashboard, /Max turns: 20/);
+  assert.match(dashboard, /LWO-002\s+In Progress\s+HOW-2/);
 });
 
 test("run defaults to statusline when invoked without args", async () => {
@@ -338,6 +397,72 @@ test("start-issue marks a ready issue in progress and assigns a branch without c
 
   const result = JSON.parse(lines[1]);
   assert.equal(result.branch, "issue/how-1-clarify-workflow-scope-and-authority");
+});
+
+test("start-issue apply-linear creates a Linear workpad comment", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "lwo-workpad-start-"));
+  const workflowPath = join(tempDir, "workflow.md");
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.LINEAR_API_KEY;
+  const originalTeamId = process.env.LINEAR_TEAM_ID;
+  const originalLog = console.log;
+  const queries = [];
+  const lines = [];
+
+  writeFileSync(workflowPath, executableWorkflow());
+  process.env.LINEAR_API_KEY = "lin_api_test";
+  process.env.LINEAR_TEAM_ID = "team-123";
+  console.log = (line) => lines.push(line);
+  globalThis.fetch = async (_url, options) => {
+    const body = JSON.parse(options.body);
+    queries.push(body.query);
+
+    if (body.query.includes("WorkflowStates")) {
+      return new Response(
+        JSON.stringify({ data: { workflowStates: { nodes: [{ id: "state-in-progress", name: "In Progress" }] } } }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (body.query.includes("IssueUpdate")) {
+      return new Response(
+        JSON.stringify({ data: { issueUpdate: { success: true, issue: { identifier: "HOW-1", state: { name: "In Progress" } } } } }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (body.query.includes("IssueComments")) {
+      return new Response(
+        JSON.stringify({ data: { issue: { comments: { nodes: [] } } } }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (body.query.includes("CommentCreate")) {
+      assert.match(body.variables.input.body, /## Codex Workpad/);
+      assert.match(body.variables.input.body, /Started active work/);
+      return new Response(
+        JSON.stringify({ data: { commentCreate: { success: true, comment: { id: "comment-1", body: body.variables.input.body } } } }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    throw new Error(`Unexpected query: ${body.query}`);
+  };
+
+  try {
+    await run(["select-issue", workflowPath, "LWO-001"]);
+    await run(["start-issue", workflowPath, "LWO-001", "--mode", "github", "--apply-linear"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    if (originalApiKey === undefined) delete process.env.LINEAR_API_KEY;
+    else process.env.LINEAR_API_KEY = originalApiKey;
+    if (originalTeamId === undefined) delete process.env.LINEAR_TEAM_ID;
+    else process.env.LINEAR_TEAM_ID = originalTeamId;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+
+  const result = JSON.parse(lines[1]);
+  assert.equal(result.workpad.action, "created");
+  assert.ok(queries.some((query) => query.includes("CommentCreate")));
 });
 
 test("start-issue checkout creates an issue branch before writing workflow changes", async () => {

@@ -144,6 +144,8 @@ export function buildWorkflow(goal, goalMode, extraStatuses = [], options = {}) 
     "- Execution workspace: pending",
     "- Linear credentials: pending",
     `- Goal mode: ${goalMode ? "on" : "off"}`,
+    `- Max concurrent agents: ${maxConcurrentAgents}`,
+    `- Max turns: ${maxTurns}`,
     "",
     "## Authority Checklist",
     "",
@@ -497,7 +499,7 @@ export function parseStartupAnswers(markdown) {
 
 export function startupAnswersComplete(markdown) {
   const answers = parseStartupAnswers(markdown);
-  return ["execution_workspace", "linear_credentials", "goal_mode"].every((key) => answers[key] && answers[key] !== "pending");
+  return ["execution_workspace", "linear_credentials", "goal_mode", "max_concurrent_agents", "max_turns"].every((key) => answers[key] && answers[key] !== "pending");
 }
 
 export function updateStartupAnswers(markdown, answers) {
@@ -505,6 +507,8 @@ export function updateStartupAnswers(markdown, answers) {
     `- Execution workspace: ${answers.workspace}`,
     `- Linear credentials: ${answers.credentials}`,
     `- Goal mode: ${answers.goalMode}`,
+    `- Max concurrent agents: ${answers.maxConcurrentAgents ?? parseWorkflowConfig(markdown).agent.max_concurrent_agents}`,
+    `- Max turns: ${answers.maxTurns ?? parseWorkflowConfig(markdown).agent.max_turns}`,
   ];
   if (!markdown.includes("## Startup Answers")) {
     return markdown.replace(/\n## Authority Checklist\n/, `\n## Startup Answers\n\n${rows.join("\n")}\n\n## Authority Checklist\n`);
@@ -1110,6 +1114,11 @@ export function preflightQuestions(env = process.env) {
       question: "Use goal mode?",
       options: ["on", "off"],
     },
+    {
+      id: "agent_limits",
+      question: "Set max_concurrent_agents and max_turns.",
+      options: ["3 agents / 20 turns", "10 agents / 20 turns", "custom"],
+    },
   ];
 }
 
@@ -1128,6 +1137,8 @@ export async function run(argv) {
       workspace: options.workspace ?? "github",
       credentials: options.credentials ?? "exported",
       goalMode: "on",
+      maxConcurrentAgents: options["max-concurrent-agents"] ?? 3,
+      maxTurns: options["max-turns"] ?? 20,
     }), "utf8");
     const result = { workflow, goal, mode: "goal", linear: null, promoted: [], poll: null };
     if (options.apply || process.env.LINEAR_API_KEY) {
@@ -1168,12 +1179,16 @@ export async function run(argv) {
     const workspace = requireValue(options.workspace, "--workspace is required");
     const credentials = requireValue(options.credentials, "--credentials is required");
     const goalMode = requireValue(options["goal-mode"], "--goal-mode is required");
+    const maxConcurrentAgents = Number(options["max-concurrent-agents"] ?? parseWorkflowConfig(fs.readFileSync(workflow, "utf8")).agent.max_concurrent_agents);
+    const maxTurns = Number(options["max-turns"] ?? parseWorkflowConfig(fs.readFileSync(workflow, "utf8")).agent.max_turns);
     if (!["github", "worktree"].includes(workspace)) throw new Error("--workspace must be github or worktree");
     if (!["exported", "env-file", "user-input"].includes(credentials)) throw new Error("--credentials must be exported, env-file, or user-input");
     parseBool(goalMode);
-    const updated = updateStartupAnswers(fs.readFileSync(workflow, "utf8"), { workspace, credentials, goalMode });
+    if (!Number.isInteger(maxConcurrentAgents) || maxConcurrentAgents < 1) throw new Error("--max-concurrent-agents must be a positive integer");
+    if (!Number.isInteger(maxTurns) || maxTurns < 1) throw new Error("--max-turns must be a positive integer");
+    const updated = updateStartupAnswers(fs.readFileSync(workflow, "utf8"), { workspace, credentials, goalMode, maxConcurrentAgents, maxTurns });
     fs.writeFileSync(workflow, updated, "utf8");
-    console.log(JSON.stringify({ workflow, workspace, credentials, goalMode }, null, 2));
+    console.log(JSON.stringify({ workflow, workspace, credentials, goalMode, maxConcurrentAgents, maxTurns }, null, 2));
     return;
   }
   if (command === "sync-linear") {

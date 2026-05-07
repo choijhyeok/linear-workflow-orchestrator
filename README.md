@@ -34,7 +34,7 @@ node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.m
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs init "Build my feature" --goal-mode on --out workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs init "Build my feature" --goal-mode on --max-concurrent-agents 10 --max-turns 20 --out workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs preflight
-node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs record-preflight workflow.md --workspace github --credentials exported --goal-mode on
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs record-preflight workflow.md --workspace github --credentials exported --goal-mode on --max-concurrent-agents 10 --max-turns 20
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs parse workflow.md
 LINEAR_TEAM_ID=team-id node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs sync-linear workflow.md --dry-run-out linear-issues.preview.json
 LINEAR_API_KEY=... LINEAR_TEAM_ID=... node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs sync-linear workflow.md --apply

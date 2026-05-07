@@ -125,7 +125,16 @@ test("run defaults to statusline when invoked without args", async () => {
     console.log = originalLog;
   }
 
-  assert.match(lines[0], /^Linear /);
+  assert.match(lines[0], /^Linear[: ]/);
+});
+
+test("statusline reports no active workflow when all issues are done", () => {
+  let workflow = buildWorkflow("Build a Linear-managed Codex plugin", true);
+  for (const issue of parseWorkflow(workflow)) {
+    workflow = updateWorkflowStatus(workflow, issue.key, "Done");
+  }
+
+  assert.equal(formatStatusLine(currentIssue(parseWorkflow(workflow))), "Linear: no active workflow");
 });
 
 test("sync-linear apply queries workflow states with Linear ID team variable", async () => {

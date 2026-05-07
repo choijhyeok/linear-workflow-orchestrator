@@ -38,11 +38,11 @@ Use the Linear Workflow Orchestrator plugin to build and ship a real bookmark CL
 | LWO-002 | Build bookmark CLI example | serial | LWO-001 | Done | HOW-74 | `examples/bookmark-cli` supports `add`, `list`, and `remove` using a persistent JSON store. |
 | LWO-003 | Verify plugin installability and CLI behavior | serial | LWO-002 | Done | HOW-75 | Automated tests cover plugin helper behavior plus bookmark add/list/remove behavior. |
 | LWO-004 | Document GitHub installation path for other Codex users | parallel | LWO-002 | Done | HOW-76 | README and install docs explain GitHub marketplace registration and local installation. |
-| LWO-005 | Push and merge GitHub delivery | serial | LWO-003, LWO-004 | Merging | HOW-77 | Changes are committed, pushed to GitHub, reviewed by checks, and merged to the repository default branch. |
+| LWO-005 | Push and merge GitHub delivery | serial | LWO-003, LWO-004 | Done | HOW-77 | Changes are committed, pushed to GitHub, reviewed by checks, and merged to the repository default branch. |
 
 ## Goal Mode Continuation Gate
 
-- [ ] Current workflow acceptance criteria are complete.
-- [ ] Review/rework loop has no open findings.
-- [ ] Merge readiness is verified.
+- [x] Current workflow acceptance criteria are complete.
+- [x] Review/rework loop has no open findings.
+- [x] Merge readiness is verified.
 - [x] Goal mode is off for this dogfood run.

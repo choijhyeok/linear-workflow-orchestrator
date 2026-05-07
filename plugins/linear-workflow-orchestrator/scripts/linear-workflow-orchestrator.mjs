@@ -170,11 +170,11 @@ export function currentIssue(issues) {
     const match = issues.find((issue) => issue.status.toLowerCase() === status.toLowerCase());
     if (match) return match;
   }
-  return issues[0] ?? null;
+  return issues.find((issue) => !["done", "canceled", "duplicate"].includes(issue.status.toLowerCase())) ?? null;
 }
 
 export function formatStatusLine(issue, options = {}) {
-  if (!issue) return options.empty ?? "Linear: no workflow";
+  if (!issue) return options.empty ?? "Linear: no active workflow";
   const maxTitle = Number(options.maxTitle ?? 64);
   const title = issue.title.length > maxTitle ? `${issue.title.slice(0, Math.max(0, maxTitle - 1))}…` : issue.title;
   const linear = issue.linearIssue ? ` · ${issue.linearIssue}` : "";

@@ -80,6 +80,14 @@ Every workflow starts with these statuses unless the user asks to add more:
 
 ## Workflow
 
+When the user explicitly asks for goal-mode automation and the three startup answers are already provided or recorded, prefer the helper's `goal` command over manual `init` + `record-preflight` + `sync-linear` plumbing:
+
+```bash
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs goal "Build a Codex plugin" --apply --poll
+```
+
+This command creates `WORKFLOW.md`, records startup answers, resolves or creates the Linear project from `LINEAR_API_KEY`, registers backlog issues, promotes dependency-ready work to Todo, and optionally runs one Linear poll tick. Use `daemon WORKFLOW.md` after bootstrap when a continuous Linear-driven loop is desired.
+
 1. Restate the development goal and authority assumptions.
 2. Create or update `workflow.md` at the repository root.
 3. Record startup answers before creating Linear issues or starting work:
@@ -177,6 +185,7 @@ node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.m
 The helper script can initialize a deterministic workflow template and parse/sync existing `workflow.md` files:
 
 ```bash
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs goal "Build a Codex plugin" --apply --poll
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs init "Build a Codex plugin" --goal-mode on --out workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs init "Build a Codex plugin" --goal-mode on --max-concurrent-agents 10 --max-turns 20 --out workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs preflight
@@ -204,7 +213,7 @@ The agent should still refine `workflow.md` with domain-specific tasks before cr
 
 ## Terminal Status Line
 
-To show the current Linear stage and task title under the Codex CLI composer, use the helper's status-line output:
+To emit the current Linear stage and task title for a host status line, use the helper's status-line output:
 
 ```bash
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs statusline workflow.md
@@ -216,7 +225,7 @@ Example:
 Linear In Progress: LWO-004 Execute independent implementation lanes · ABC-123
 ```
 
-The command reads `workflow.md` and chooses the most active issue in this priority order: In Progress, Rework, Review, Merging, Todo, Backlog. Plugin installation exposes this command, while actual native TUI status-line registration remains owned by the host Codex/OMX setup.
+The command reads `workflow.md` and chooses the most active issue in this priority order: In Progress, Rework, Review, Merging, Todo, Backlog. Plugin installation exposes this command, while actual native TUI status-line registration remains owned by the host Codex/OMX setup. Current Codex TUI builds do not run arbitrary plugin dashboard commands below the composer, so use the installed dashboard wrapper in a terminal split or OMX HUD pane until the host exposes command-backed HUD panels.
 
 Use `--hyperlink` with `--linear-base-url` or `LINEAR_PROJECT_URL` when the host status line preserves OSC 8 terminal hyperlinks. This lets the visible Linear issue identifier open the corresponding Linear issue page.
 

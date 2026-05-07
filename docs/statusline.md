@@ -50,7 +50,7 @@ Done, Canceled, and Duplicate issues are terminal and do not occupy the active s
 ~/.codex/bin/linear-workflow-orchestrator-statusline
 ```
 
-and registers it in `~/.codex/config.toml` and `~/.codex/config.json` as the plugin's statusline command. Hosts that support command-backed status lines can pick it up automatically. The wrapper defaults to `workflow.md` in the current directory and enables `--hyperlink`.
+and registers plugin metadata in `~/.codex/config.toml` and `~/.codex/config.json`. Hosts that support command-backed status lines can pick it up from that metadata. The wrapper defaults to `workflow.md` in the current directory and enables `--hyperlink`.
 
 Direct wrapper check:
 
@@ -58,9 +58,9 @@ Direct wrapper check:
 ~/.codex/bin/linear-workflow-orchestrator-statusline
 ```
 
-Codex plugin installation also discovers skills and plugin files. Native TUI status-line rendering remains host-dependent, so unsupported hosts may keep the command registered without rendering it.
+Codex plugin installation also discovers skills and plugin files. Native TUI status-line rendering remains host-dependent, and current Codex TUI builds do not execute arbitrary plugin dashboard commands below the composer. If nothing renders under the prompt, run the dashboard wrapper in a terminal split or OMX HUD pane.
 
-For Codex builds that support a command-backed status line, the installer writes the equivalent of:
+For future Codex builds that support a command-backed status line, point the host at:
 
 ```toml
 statusLine = { type = "command", command = "/Users/you/.codex/bin/linear-workflow-orchestrator-statusline", source = "linear-workflow-orchestrator" }

@@ -30,6 +30,7 @@ Backlog, Todo, In Progress, Rework, Review, Merging, Done, Canceled, and Duplica
 ## Local CLI
 
 ```bash
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs goal "Build my feature" --apply --poll
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs init "Build my feature" --goal-mode on --out workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs init "Build my feature" --goal-mode on --max-concurrent-agents 10 --max-turns 20 --out workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs preflight
@@ -52,6 +53,8 @@ node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.m
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs daemon WORKFLOW.md
 ```
 
+`goal` is the friendlier Symphony-style bootstrap path. It writes `WORKFLOW.md`, records goal-mode startup answers, creates or resolves the Linear project from `LINEAR_API_KEY`, registers backlog issues, promotes dependency-ready work to Todo, and optionally runs one poll tick with `--poll`. Use `daemon WORKFLOW.md` after bootstrap for a continuous Linear-driven loop.
+
 `--apply` calls Linear's GraphQL API. Without `--apply`, the script only generates the payload that would be sent.
 
 Generated workflows include Symphony-style front matter for `tracker`, `workspace`, `hooks`, `agent`, and `codex`. `agent.max_concurrent_agents` limits how many ready parallel issues `wave` selects, and `agent.max_turns` is surfaced as the per-issue lane budget in the dashboard/workflow policy.
@@ -60,9 +63,9 @@ In goal mode, the skill bypasses routine continuation prompts after startup auth
 
 For unattended Symphony-style operation, use `poll` for one dispatch tick or `daemon` for a continuous polling loop. These commands read Linear candidate issues from `tracker.project_slug`, claim eligible `Todo` work by moving it to `In Progress`, create/reuse the issue workspace under `workspace.root`, run configured hooks, update the Linear `## Codex Workpad`, and execute `codex.command` inside that per-issue workspace. The generated default `codex.command` uses non-interactive `codex exec` with bypass mode; customize it in `WORKFLOW.md` if your trust model requires different flags.
 
-## Status Line
+## Status Line And Dashboard
 
-The plugin includes a Node.js status-line emitter so Codex or OMX can show the current Linear workflow task under the terminal composer:
+The plugin includes a Node.js status-line emitter for hosts that support command-backed status items:
 
 ```bash
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs statusline workflow.md
@@ -76,17 +79,15 @@ Linear In Progress: LWO-004 Execute independent implementation lanes · ABC-123
 
 It selects the first issue by active status priority: In Progress, Rework, Review, Merging, Todo, then Backlog.
 
-For a larger Symphony-style operator view, use:
+For a larger Symphony-style operator view in a side pane or terminal split, use:
 
 ```bash
 ~/.codex/bin/linear-workflow-orchestrator-dashboard
 ```
 
-This prints a multiline dashboard from `workflow.md`. Showing it under the Codex composer depends on the local Codex/OMX host supporting command-backed multiline HUD panels.
+This prints a multiline dashboard from `workflow.md`. Current Codex TUI builds own the composer/status-line rendering and do not execute arbitrary plugin dashboard commands under the composer, so the plugin cannot force Symphony-style rows to appear below the prompt by itself. Until the host exposes command-backed HUD panels, run the dashboard wrapper in a terminal split or OMX HUD pane.
 
-Codex plugins expose skills and companion files, but native TUI status-line wiring is owned by the local Codex/OMX setup. After installing the plugin, add this script as a custom status-line/HUD command in the host setup that supports command-backed status items.
-
-For hosts that support command-backed status lines:
+For hosts that support command-backed status lines in the future:
 
 ```toml
 statusLine = { type = "command", command = "/absolute/path/to/linear-workflow-orchestrator/plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs" }
@@ -123,7 +124,7 @@ codex plugin marketplace add /Users/jaehyeokchoi/Desktop/linear-workflow-orchest
 npm run install:local
 ```
 
-`install:local` also installs `~/.codex/bin/linear-workflow-orchestrator-statusline` and `~/.codex/bin/linear-workflow-orchestrator-dashboard`, then registers them in Codex config as plugin status commands. When the host supports command-backed status lines or HUD panels, active Linear workflow issues are shown automatically from the current `workflow.md`.
+`install:local` also installs `~/.codex/bin/linear-workflow-orchestrator-statusline` and `~/.codex/bin/linear-workflow-orchestrator-dashboard`, then registers plugin metadata in Codex config. When the host supports command-backed status lines or HUD panels, active Linear workflow issues can be rendered from the current `workflow.md`; otherwise use the dashboard wrapper in a side pane.
 
 ## Dogfood Example
 

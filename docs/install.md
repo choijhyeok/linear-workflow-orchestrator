@@ -71,6 +71,8 @@ At the start of a workflow, the skill should ask:
 - whether Linear credentials are exported, stored in an env file, or supplied by the user
 - whether goal mode is on
 
+These questions are a hard startup gate. The skill should ask them before inspecting the target repository, creating `workflow.md`, or deciding that the project is local-only.
+
 After Linear backlog registration, active work must start through `start-issue` so the workflow records an issue-specific branch or worktree:
 
 ```bash

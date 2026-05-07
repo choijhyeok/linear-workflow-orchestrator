@@ -19,7 +19,7 @@ If goal mode is on, keep checking whether more development work remains after th
 
 ## Startup Questions
 
-Ask these before creating `workflow.md` or doing external writes:
+Hard gate: ask these three questions before repository inspection, creating `workflow.md`, running `git`, running implementation commands, or doing external writes. Do not infer or auto-select the answers from the current directory, environment, or perceived user intent. If the user supplied one answer inline, ask only for the missing answers.
 
 1. Execution workspace:
    - GitHub issue branch flow: create one branch per Linear issue and push each branch/PR.
@@ -31,6 +31,18 @@ Ask these before creating `workflow.md` or doing external writes:
 3. Goal mode:
    - on: continue discovering and registering follow-up workflow slices until the product is complete
    - off: stop after this workflow is complete
+
+The first assistant response for a new `/linear-workflow-orchestrator` request must be only the startup-question prompt plus a short statement that no workflow work will start until those answers are recorded. Do not say that goal mode is off, Linear is local-only, or GitHub is unavailable unless the user explicitly answered that way.
+
+Suggested Korean prompt shape:
+
+```text
+시작 전에 3가지만 정하겠습니다.
+
+1. 실행 방식: GitHub issue branch / local worktree 중 무엇으로 할까요?
+2. Linear 인증: 이미 export됨 / env 파일 경로 제공 / 지금 입력 중 무엇인가요?
+3. goal mode: on / off 중 무엇으로 할까요?
+```
 
 ## Required User Inputs
 

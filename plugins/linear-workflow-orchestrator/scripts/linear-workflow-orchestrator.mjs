@@ -935,21 +935,26 @@ export function normalizeLinearIssue(issue) {
   };
 }
 
-export async function fetchLinearCandidateIssues(apiKey, config) {
+export async function fetchLinearCandidateIssues(apiKey, config, options = {}) {
   const projectSlug = config.tracker.project_slug && config.tracker.project_slug !== "pending"
     ? config.tracker.project_slug
     : projectSlugFromUrl(process.env.LINEAR_PROJECT_URL);
   if (!projectSlug) throw new Error("tracker.project_slug or LINEAR_PROJECT_URL is required for polling.");
   const activeStates = config.tracker.active_states ?? ["Todo", "In Progress"];
+  const first = Number(options.first ?? Math.max(Number(config.agent?.max_concurrent_agents ?? 3) * 2, 10));
   const query = `
-    query ProjectIssues($projectSlug: String!) {
+    query ProjectIssues($projectSlug: String!, $states: [String!], $first: Int!) {
       projects(filter: { slugId: { eq: $projectSlug } }) {
         nodes {
           id
           name
           slugId
           url
-          issues {
+          issues(
+            first: $first
+            filter: { state: { name: { in: $states } } }
+            orderBy: updatedAt
+          ) {
             nodes {
               id
               identifier
@@ -969,7 +974,7 @@ export async function fetchLinearCandidateIssues(apiKey, config) {
       }
     }
   `;
-  const data = await graphql(apiKey, query, { projectSlug });
+  const data = await graphql(apiKey, query, { projectSlug, states: activeStates, first });
   const issues = data.projects.nodes.flatMap((project) => project.issues.nodes).map(normalizeLinearIssue);
   const active = new Set(activeStates.map((state) => state.toLowerCase()));
   return issues.filter((issue) => active.has(issue.state.toLowerCase())).sort(compareLinearIssues);
@@ -1117,8 +1122,10 @@ export async function pollLinearOnce(workflowPath, options = {}) {
   const workflowMarkdown = fs.readFileSync(workflowPath, "utf8");
   const config = parseWorkflowConfig(workflowMarkdown);
   const apiKey = requireValue(process.env.LINEAR_API_KEY, "LINEAR_API_KEY is required for polling.");
-  const candidates = await fetchLinearCandidateIssues(apiKey, config);
   const maxAgents = Number(options["max-concurrent-agents"] ?? config.agent.max_concurrent_agents);
+  const candidates = await fetchLinearCandidateIssues(apiKey, config, {
+    first: options["fetch-limit"] ?? Math.max(maxAgents * 2, 10),
+  });
   const selected = candidates.slice(0, Math.max(0, maxAgents));
   const results = await Promise.all(selected.map((issue) => dispatchLinearIssue(apiKey, workflowMarkdown, issue, {
       workflowDir: path.dirname(path.resolve(workflowPath)),

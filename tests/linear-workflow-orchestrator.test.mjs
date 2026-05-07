@@ -484,6 +484,8 @@ test("run and tui commands render dashboard and perform one poll tick", async ()
   globalThis.fetch = async (_url, options) => {
     const body = JSON.parse(options.body);
     if (body.query.includes("ProjectIssues")) {
+      assert.equal(body.variables.first, 10);
+      assert.deepEqual(body.variables.states, ["Todo", "In Progress", "Merging", "Rework"]);
       return new Response(JSON.stringify({ data: { projects: { nodes: [] } } }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     throw new Error(`Unexpected query: ${body.query}`);
@@ -716,6 +718,10 @@ test("poll dispatches Linear Todo issue into workspace without prompting", async
     queries.push(body.query);
 
     if (body.query.includes("ProjectIssues")) {
+      assert.match(body.query, /issues\(\s*first: \$first/);
+      assert.match(body.query, /state: \{ name: \{ in: \$states \} \}/);
+      assert.equal(body.variables.first, 10);
+      assert.deepEqual(body.variables.states, ["Todo", "In Progress"]);
       return new Response(
         JSON.stringify({
           data: {
@@ -824,6 +830,7 @@ test("goal command creates workflow, applies Linear, promotes ready issue, and p
       return new Response(JSON.stringify({ data: { issueUpdate: { success: true, issue: { identifier: body.variables.id, state: { name: "Todo" } } } } }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     if (body.query.includes("ProjectIssues")) {
+      assert.equal(body.variables.first, 10);
       return new Response(JSON.stringify({ data: { projects: { nodes: [] } } }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     throw new Error(`Unexpected query: ${body.query}`);

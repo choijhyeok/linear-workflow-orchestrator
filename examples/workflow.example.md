@@ -8,8 +8,15 @@ Build a Codex plugin that writes workflow.md, creates Linear issues, and manages
 
 - Goal mode: on
 
+## Startup Answers
+
+- Execution workspace: github
+- Linear credentials: exported
+- Goal mode: on
+
 ## Authority Checklist
 
+- [x] Startup questions answered: GitHub branch flow or local worktree flow, Linear credential source, and goal mode.
 - [x] GitHub authority confirmed for branches, worktrees, commits, PRs, and merge checks.
 - [ ] Linear authority confirmed for issue creation and status updates.
 - [ ] `LINEAR_API_KEY` source confirmed without exposing the secret.
@@ -26,16 +33,17 @@ Build a Codex plugin that writes workflow.md, creates Linear issues, and manages
 | Rework | Follow-up implementation requested after review or failed verification. |
 | Review | Review agent checks the developed code and workflow result. |
 | Merging | GitHub or local worktree integration and merge readiness. |
+| Done | Work is implemented, verified, and no longer active. |
 | Canceled | Work explicitly canceled or made obsolete by scope changes. |
 | Duplicate | Work excluded because another issue already covers it. |
 
 ## Execution Plan
 
-| ID | Title | Lane | Depends On | Status | Linear Issue | Acceptance Criteria |
-| --- | --- | --- | --- | --- | --- | --- |
-| LWO-001 | Create plugin manifest and skill | serial | - | Backlog | - | Codex can discover the plugin and route the skill. |
-| LWO-002 | Implement workflow helper CLI | serial | LWO-001 | Backlog | - | CLI can init, parse, and dry-run Linear payloads. |
-| LWO-003 | Add verification tests | parallel | LWO-002 | Backlog | - | Parser and Linear payload tests pass. |
+| ID | Title | Lane | Depends On | Status | Linear Issue | Branch/Worktree | Acceptance Criteria |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| LWO-001 | Create plugin manifest and skill | serial | - | Backlog | - | - | Codex can discover the plugin and route the skill. |
+| LWO-002 | Implement workflow helper CLI | serial | LWO-001 | Backlog | - | - | CLI can init, parse, and dry-run Linear payloads. |
+| LWO-003 | Add verification tests | parallel | LWO-002 | Backlog | - | - | Parser and Linear payload tests pass. |
 
 ## Goal Mode Continuation Gate
 

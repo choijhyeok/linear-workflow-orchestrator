@@ -1,0 +1,10 @@
+{
+  "name": "linear-workflow-orchestrator-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "install:local": "node scripts/install-local.mjs",
+    "test": "node --test tests/*.test.mjs"
+  }
+}

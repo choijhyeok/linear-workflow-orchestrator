@@ -1,0 +1,117 @@
+---
+name: linear-workflow-orchestrator
+description: Convert a development goal into workflow.md, ask for GitHub and Linear authority, create or dry-run Linear issues, and guide Codex through backlog, execution, review, rework, merge, cancellation, and duplicate handling. Use when the user invokes /linear-workflow-orchestrator or asks to manage Codex development work through Linear.
+---
+
+# Linear Workflow Orchestrator
+
+## Purpose
+
+Use this skill when the user wants Codex to turn a development idea into a `workflow.md`, register the work in Linear, and then manage execution status until the work is complete.
+
+The intended command shape is:
+
+```text
+/linear-workflow-orchestrator <development goal> [goal mode: on|off]
+```
+
+If goal mode is on, keep checking whether more development work remains after the current workflow is complete. When the product is not finished, create the next `workflow.md` slice and continue with the same Linear/status process.
+
+## Required User Inputs
+
+Collect these before doing external writes:
+
+- Development goal: what the user wants built.
+- Goal mode: whether Codex should continue discovering follow-up workflow slices until the product is complete.
+- GitHub authority: whether Codex may create branches, worktrees, commits, PRs, or merge-related artifacts.
+- Linear authority: whether Codex may create or update Linear issues.
+- Linear credentials when Linear writes are requested:
+  - `LINEAR_API_KEY`
+  - `LINEAR_TEAM_ID`
+  - `LINEAR_PROJECT_URL` or a project UUID if available
+
+If values are already present in the environment, use them. Do not print secrets.
+
+## Default Status Model
+
+Every workflow starts with these statuses unless the user asks to add more:
+
+| Status | Meaning |
+| --- | --- |
+| Backlog | All work discovered for the goal before it is selected for execution. |
+| Todo | Ready work, including parallel and serial lanes, waiting to start. |
+| In Progress | Work actively being implemented by Codex or a subagent. |
+| Rework | Follow-up implementation requested after review or failed verification. |
+| Review | A review agent checks the developed code and workflow result. |
+| Merging | GitHub or local worktree integration, conflict checks, and final merge readiness. |
+| Done | Work is implemented, verified, and no longer active. |
+| Canceled | Work explicitly canceled by the user or made obsolete by scope changes. |
+| Duplicate | Work excluded because another issue already covers it. |
+
+## Workflow
+
+1. Restate the development goal and authority assumptions.
+2. Create or update `workflow.md` at the repository root.
+3. Include:
+   - goal mode value
+   - GitHub/Linear authority checklist
+   - credential sources without secret values
+   - status model
+   - execution table with issue IDs, titles, lane type, dependencies, status, and acceptance criteria
+   - goal-mode continuation gate
+4. If Linear writes are authorized and credentials exist, run:
+
+```bash
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs sync-linear workflow.md --apply
+```
+
+5. If Linear writes are not authorized or credentials are missing, run a dry-run instead:
+
+```bash
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs sync-linear workflow.md --dry-run-out linear-issues.preview.json
+```
+
+6. Use the issue dependency graph:
+   - start independent Todo issues in parallel when that improves throughput
+   - keep dependent work serial
+   - move implemented work to Review
+   - move review failures to Rework
+   - move accepted work to Merging
+   - mark obsolete work as Canceled or Duplicate
+7. Before claiming completion, audit all workflow acceptance criteria and Linear issue statuses.
+8. In goal mode, create a follow-up workflow when the current audit finds remaining product work.
+
+## Helper CLI
+
+The helper script can initialize a deterministic workflow template and parse/sync existing `workflow.md` files:
+
+```bash
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs init "Build a Codex plugin" --goal-mode on --out workflow.md
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs parse workflow.md
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs sync-linear workflow.md --dry-run-out linear-issues.preview.json
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs set-status workflow.md LWO-004 "In Progress"
+LINEAR_API_KEY=... LINEAR_TEAM_ID=... node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs set-status workflow.md LWO-004 Review --linear-issue ABC-123 --apply-linear
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs statusline workflow.md
+```
+
+The agent should still refine `workflow.md` with domain-specific tasks before creating Linear issues.
+
+## Terminal Status Line
+
+To show the current Linear stage and task title under the Codex CLI composer, use the helper's status-line output:
+
+```bash
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs statusline workflow.md
+```
+
+Example:
+
+```text
+Linear In Progress: LWO-004 Execute independent implementation lanes · ABC-123
+```
+
+The command reads `workflow.md` and chooses the most active issue in this priority order: In Progress, Rework, Review, Merging, Todo, Backlog. Plugin installation exposes this command, while actual native TUI status-line registration remains owned by the host Codex/OMX setup.
+
+## Linear API Notes
+
+Linear uses a GraphQL endpoint at `https://api.linear.app/graphql`. Personal API keys are sent as `Authorization: <API_KEY>`; OAuth access tokens use `Authorization: Bearer <ACCESS_TOKEN>`. `issueCreate` requires `teamId` and `title`; if no `stateId` is provided, Linear assigns the team's first Backlog/Triage state. This skill attempts to find a team state named `Backlog` and uses it when available.

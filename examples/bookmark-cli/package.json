@@ -1,0 +1,9 @@
+{
+  "name": "@linear-workflow-orchestrator/bookmark-cli-example",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "bookmark": "./bin/bookmark.js"
+  }
+}

@@ -367,6 +367,11 @@ function pad(value, width) {
 export function formatDashboard(issues, options = {}) {
   const active = issues.filter((issue) => ACTIVE_EXECUTION_STATUSES.has(issue.status.toLowerCase()));
   const running = issues.filter((issue) => !TERMINAL_STATUSES.has(issue.status.toLowerCase()));
+  const events = new Map((options.events ?? []).flatMap((event) => [
+    [event.id, event],
+    [event.issue, event],
+    [event.key, event],
+  ].filter((entry) => entry[0])));
   const maxAgents = Number(options.maxConcurrentAgents ?? issues.length);
   const maxTurns = Number(options.maxTurns ?? 20);
   const project = options.projectUrl ?? process.env.LINEAR_PROJECT_URL ?? "n/a";
@@ -390,8 +395,10 @@ export function formatDashboard(issues, options = {}) {
   ];
   for (const issue of running) {
     const id = issue.linearIssue || issue.key;
+    const event = events.get(issue.linearIssue) ?? events.get(issue.key) ?? {};
     const branch = issue.branch ? ` · ${issue.branch}` : "";
-    rows.push(`• ${pad(id, 10)} ${pad(issue.status, 12)} ${pad(issue.pid || "-", 8)} ${pad(issue.turn ? `- / ${issue.turn}` : "- / -", 12)} ${pad(issue.tokens || "-", 10)} ${pad(issue.session || "-", 12)} ${issue.title}${branch}`);
+    const message = event.event ?? `${issue.title}${branch}`;
+    rows.push(`• ${pad(id, 10)} ${pad(issue.status, 12)} ${pad(event.pid || issue.pid || "-", 8)} ${pad(issue.turn ? `- / ${issue.turn}` : "- / -", 12)} ${pad(issue.tokens || "-", 10)} ${pad(issue.session || "-", 12)} ${message}`);
   }
   const blocked = issues.filter((issue) => issue.status.toLowerCase() === "backlog" && issue.dependsOn.length);
   rows.push("", "├─ Backoff queue", "");
@@ -1092,9 +1099,21 @@ function runHook(script, cwd, env) {
 async function runAgentCommand(command, cwd, prompt, env, options = {}) {
   if (options.dryRunAgent) return { skipped: true, command };
   return await new Promise((resolve, reject) => {
+    const logDir = options.logDir ?? path.join(cwd, ".lwo", "agent-logs");
+    fs.mkdirSync(logDir, { recursive: true });
+    const logPath = path.join(logDir, `${slugifyBranchPart(options.issueIdentifier ?? "agent")}-${Date.now()}.log`);
+    const log = fs.createWriteStream(logPath, { flags: "a" });
+    let lastLine = "";
+    const record = (chunk, target) => {
+      const text = chunk.toString();
+      log.write(text);
+      const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      if (lines.length) lastLine = lines.at(-1);
+      if (options.streamAgentOutput) target.write(text);
+    };
     const child = spawn("sh", ["-lc", command], {
       cwd,
-      stdio: "inherit",
+      stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...env,
         SYMPHONY_ISSUE_PROMPT: prompt,
@@ -1103,10 +1122,33 @@ async function runAgentCommand(command, cwd, prompt, env, options = {}) {
         LWO_MAX_TURNS: String(options.maxTurns ?? ""),
       },
     });
-    child.on("error", reject);
+    child.stdout.on("data", (chunk) => record(chunk, process.stdout));
+    child.stderr.on("data", (chunk) => record(chunk, process.stderr));
+    child.on("error", (error) => {
+      log.end();
+      reject(error);
+    });
     child.on("close", (code, signal) => {
-      if (code === 0) resolve({ ok: true, command, pid: child.pid });
-      else reject(new Error(`agent command exited with ${signal ?? code}: ${command}`));
+      log.end();
+      if (code === 0) {
+        resolve({
+          ok: true,
+          command,
+          pid: child.pid,
+          logPath,
+          event: lastLine ? `completed: ${lastLine}` : `completed: log ${path.relative(cwd, logPath)}`,
+        });
+      } else {
+        const exit = signal ?? code;
+        const error = new Error(`agent command exited with ${exit}: ${command}`);
+        error.agent = {
+          command,
+          pid: child.pid,
+          logPath,
+          event: `failed (${exit}): ${lastLine || path.relative(cwd, logPath)}`,
+        };
+        reject(error);
+      }
     });
   });
 }
@@ -1139,6 +1181,8 @@ export async function dispatchLinearIssue(apiKey, workflowMarkdown, issue, optio
   result.agent = await runAgentCommand(config.codex.command, workspace.path, prompt, env, {
     dryRunAgent: options.dryRunAgent,
     maxTurns: config.agent.max_turns,
+    issueIdentifier: activeIssue.identifier,
+    streamAgentOutput: options["stream-agent-output"],
   });
   if (!options.skipHooks) runHook(config.hooks.after_run, workspace.path, env);
   return result;
@@ -1170,6 +1214,7 @@ function dashboardSnapshot(workflow, options = {}) {
     maxTurns: options["max-turns"] ?? config.agent.max_turns,
     projectUrl: options["project-url"],
     nextRefresh: options["next-refresh"],
+    events: options.events,
   });
 }
 
@@ -1265,7 +1310,7 @@ function parseOptions(args) {
       continue;
     }
     const key = arg.slice(2);
-    if (["apply", "apply-linear", "checkout", "local-only", "hyperlink", "once", "dry-run-agent", "skip-hooks", "poll", "daemon", "watch", "no-clear", "open-tui"].includes(key)) {
+    if (["apply", "apply-linear", "checkout", "local-only", "hyperlink", "once", "dry-run-agent", "skip-hooks", "poll", "daemon", "watch", "no-clear", "open-tui", "debug", "stream-agent-output"].includes(key)) {
       values[key] = true;
     } else {
       values[key] = args[index + 1];
@@ -1667,15 +1712,28 @@ export async function run(argv) {
   }
   if (command === "run" || command === "tui") {
     const workflow = options._[0] ?? "WORKFLOW.md";
+    let events = [];
     while (true) {
       clearDashboardScreen(options);
-      console.log(dashboardSnapshot(workflow, options));
+      console.log(dashboardSnapshot(workflow, { ...options, events }));
       const startedAt = new Date().toISOString();
       try {
         const result = await pollLinearOnce(workflow, options);
-        console.log(JSON.stringify({ startedAt, ...result }, null, 2));
+        events = result.results.map((item) => ({
+          id: item.issue,
+          issue: item.issue,
+          pid: item.agent?.pid,
+          event: item.agent?.event ?? `dispatched ${item.issue}`,
+        }));
+        if (options.debug) console.log(JSON.stringify({ startedAt, ...result }, null, 2));
       } catch (error) {
-        console.error(JSON.stringify({ startedAt, error: error.message }));
+        events = [{
+          id: "error",
+          issue: "error",
+          event: error.agent?.event ?? error.message,
+          pid: error.agent?.pid,
+        }];
+        if (options.debug) console.error(JSON.stringify({ startedAt, error: error.message, agent: error.agent }, null, 2));
       }
       if (options.once) return;
       const config = fs.existsSync(workflow) ? parseWorkflowConfig(fs.readFileSync(workflow, "utf8")) : { polling: {} };

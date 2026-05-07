@@ -299,7 +299,11 @@ export function parseWorkflowConfig(markdown) {
 }
 
 function coerceScalar(value) {
-  const unquoted = String(value).trim().replace(/^["']|["']$/g, "");
+  const trimmed = String(value).trim();
+  const unquoted = (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) ? trimmed.slice(1, -1) : trimmed;
   const numeric = Number(unquoted);
   return Number.isFinite(numeric) && unquoted !== "" ? numeric : unquoted;
 }

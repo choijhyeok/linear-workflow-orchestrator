@@ -87,6 +87,15 @@ test("workflow config parses agent concurrency and turn budget", () => {
   assert.equal(config.codex.command, "codex app-server");
 });
 
+test("workflow config preserves shell quotes inside unquoted command scalars", () => {
+  const config = parseWorkflowConfig(buildWorkflow("Build a Linear-managed Codex plugin", true));
+
+  assert.equal(
+    config.codex.command,
+    'codex exec --dangerously-bypass-approvals-and-sandbox "$SYMPHONY_ISSUE_PROMPT"',
+  );
+});
+
 test("workflow config parses lists and hook block scalars", () => {
   const workflow = [
     "---",

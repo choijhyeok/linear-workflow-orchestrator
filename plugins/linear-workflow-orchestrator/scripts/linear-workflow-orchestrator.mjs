@@ -1046,6 +1046,28 @@ export function renderIssuePrompt(template, issue, attempt = null) {
   return rendered;
 }
 
+export function issueScopedPrompt(workflowMarkdown, issue, attempt = null) {
+  const body = workflowPromptTemplate(workflowMarkdown);
+  if (body.includes("{{ issue.")) {
+    return renderIssuePrompt(body, issue, attempt);
+  }
+  const retryNote = attempt ? `\nRetry attempt: ${attempt}\n` : "";
+  const description = String(issue.description || "").trim();
+  return [
+    `You are working on exactly one Linear issue: ${issue.identifier} - ${issue.title}.`,
+    "",
+    "Scope contract:",
+    `- Implement only this issue: ${issue.identifier}.`,
+    "- Do not implement sibling Linear issues, later workflow steps, documentation slices, review slices, or merge slices unless this issue explicitly asks for them.",
+    "- If the repository contains WORKFLOW.md or other generated orchestration files, treat them as context only; they are not permission to complete the whole workflow.",
+    "- Keep changes inside this issue branch/workspace.",
+    "- Run the smallest meaningful validation for this issue and report evidence in the final response.",
+    retryNote.trimEnd(),
+    "Linear issue description:",
+    description || "(No description provided.)",
+  ].filter((part) => part !== "").join("\n");
+}
+
 export function prepareWorkspace(config, issue, options = {}) {
   const workflowDir = options.workflowDir ?? process.cwd();
   const workspacePath = workspacePathForIssue(config, issue, workflowDir);
@@ -1113,7 +1135,7 @@ export async function dispatchLinearIssue(apiKey, workflowMarkdown, issue, optio
     note: `Claimed by poller in ${workspace.path}.`,
   });
   if (!options.skipHooks) runHook(config.hooks.before_run, workspace.path, env);
-  const prompt = renderIssuePrompt(workflowPromptTemplate(workflowMarkdown), activeIssue, options.attempt ?? null);
+  const prompt = issueScopedPrompt(workflowMarkdown, activeIssue, options.attempt ?? null);
   result.agent = await runAgentCommand(config.codex.command, workspace.path, prompt, env, {
     dryRunAgent: options.dryRunAgent,
     maxTurns: config.agent.max_turns,

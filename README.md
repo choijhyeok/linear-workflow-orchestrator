@@ -15,8 +15,10 @@ The intended workflow is not "create Linear issues after the work is already don
 ## Command Shape
 
 ```text
-/linear-workflow-orchestrator <development goal> [goal mode: on|off]
+$linear-workflow-orchestrator <development goal> [goal mode: on|off]
 ```
+
+Use the `$` skill invocation form in Codex. `/linear-workflow-orchestrator` is not a native Codex slash command and will be rejected before the skill can run.
 
 The plugin skill asks for GitHub authority, Linear authority, and Linear credentials before external writes. If Linear credentials are not available, it produces a dry-run JSON payload instead of calling Linear.
 

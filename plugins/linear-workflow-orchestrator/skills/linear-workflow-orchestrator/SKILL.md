@@ -143,6 +143,7 @@ node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.m
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs set-status workflow.md LWO-004 Merging --reviewed-by codex-reviewer
 LINEAR_API_KEY=... LINEAR_TEAM_ID=... node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs set-status workflow.md LWO-004 Review --linear-issue ABC-123 --apply-linear
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs statusline workflow.md
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs statusline workflow.md --hyperlink --linear-base-url https://linear.app/choijhyeok
 ```
 
 The agent should still refine `workflow.md` with domain-specific tasks before creating Linear issues. Active implementation must be selected with `select-issue` before `start-issue`.
@@ -162,6 +163,8 @@ Linear In Progress: LWO-004 Execute independent implementation lanes · ABC-123
 ```
 
 The command reads `workflow.md` and chooses the most active issue in this priority order: In Progress, Rework, Review, Merging, Todo, Backlog. Plugin installation exposes this command, while actual native TUI status-line registration remains owned by the host Codex/OMX setup.
+
+Use `--hyperlink` with `--linear-base-url` or `LINEAR_PROJECT_URL` when the host status line preserves OSC 8 terminal hyperlinks. This lets the visible Linear issue identifier open the corresponding Linear issue page.
 
 ## Linear API Notes
 

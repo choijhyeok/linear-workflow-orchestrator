@@ -10,6 +10,7 @@ import {
   buildWorkflow,
   currentIssue,
   formatStatusLine,
+  linearIssueUrl,
   parseWorkflow,
   preflightQuestions,
   projectIdFromUrl,
@@ -175,6 +176,25 @@ test("statusline selects active issue by status priority", () => {
   const line = formatStatusLine(currentIssue(parseWorkflow(workflow)));
 
   assert.equal(line, "Linear In Progress: LWO-004 Execute independent implementation lanes · ABC-123");
+});
+
+test("statusline can hyperlink Linear issue identifiers", () => {
+  const issue = {
+    key: "LWO-004",
+    title: "Build bookmark CLI example",
+    status: "In Progress",
+    linearIssue: "HOW-76",
+  };
+  const line = formatStatusLine(issue, { hyperlink: true, linearBaseUrl: "https://linear.app/choijhyeok/project/example/issues" });
+
+  assert.equal(line, "Linear In Progress: LWO-004 Build bookmark CLI example · \u001B]8;;https://linear.app/choijhyeok/issue/HOW-76\u0007HOW-76\u001B]8;;\u0007");
+});
+
+test("linear issue urls are derived from Linear project URLs", () => {
+  assert.equal(
+    linearIssueUrl({ linearIssue: "HOW-76" }, { projectUrl: "https://linear.app/choijhyeok/project/hanwha-project-5f527568b378/issues" }),
+    "https://linear.app/choijhyeok/issue/HOW-76",
+  );
 });
 
 test("run defaults to statusline when invoked without args", async () => {

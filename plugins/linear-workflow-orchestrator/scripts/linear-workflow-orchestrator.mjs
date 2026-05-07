@@ -195,8 +195,27 @@ export function formatStatusLine(issue, options = {}) {
   if (!issue) return options.empty ?? "Linear: no active workflow";
   const maxTitle = Number(options.maxTitle ?? 64);
   const title = issue.title.length > maxTitle ? `${issue.title.slice(0, Math.max(0, maxTitle - 1))}…` : issue.title;
-  const linear = issue.linearIssue ? ` · ${issue.linearIssue}` : "";
+  const url = linearIssueUrl(issue, options);
+  const linearLabel = options.hyperlink && url ? terminalHyperlink(issue.linearIssue, url) : issue.linearIssue;
+  const linear = issue.linearIssue ? ` · ${linearLabel}` : "";
   return `Linear ${issue.status}: ${issue.key} ${title}${linear}`;
+}
+
+export function linearWorkspaceBaseUrl(value) {
+  if (!value) return "";
+  const match = String(value).match(/^(https:\/\/linear\.app\/[^/]+)/);
+  return match?.[1] ?? String(value).replace(/\/$/, "");
+}
+
+export function linearIssueUrl(issue, options = {}) {
+  if (!issue?.linearIssue) return "";
+  const baseUrl = linearWorkspaceBaseUrl(options.linearBaseUrl ?? options.projectUrl ?? process.env.LINEAR_WORKSPACE_URL ?? process.env.LINEAR_PROJECT_URL);
+  if (!baseUrl) return "";
+  return `${baseUrl}/issue/${encodeURIComponent(issue.linearIssue)}`;
+}
+
+export function terminalHyperlink(label, url) {
+  return `\u001B]8;;${url}\u0007${label}\u001B]8;;\u0007`;
 }
 
 export function updateWorkflowStatus(markdown, issueKey, status, linearIssue = "") {
@@ -516,7 +535,7 @@ function parseOptions(args) {
       continue;
     }
     const key = arg.slice(2);
-    if (["apply", "apply-linear", "checkout", "local-only"].includes(key)) {
+    if (["apply", "apply-linear", "checkout", "local-only", "hyperlink"].includes(key)) {
       values[key] = true;
     } else {
       values[key] = args[index + 1];
@@ -715,7 +734,13 @@ export async function run(argv) {
     if (options.json) {
       console.log(JSON.stringify(issue ?? {}, null, 2));
     } else {
-      console.log(formatStatusLine(issue, { maxTitle: options["max-title"], empty: options.empty }));
+      console.log(formatStatusLine(issue, {
+        maxTitle: options["max-title"],
+        empty: options.empty,
+        hyperlink: options.hyperlink,
+        linearBaseUrl: options["linear-base-url"],
+        projectUrl: options["project-url"],
+      }));
     }
     return;
   }

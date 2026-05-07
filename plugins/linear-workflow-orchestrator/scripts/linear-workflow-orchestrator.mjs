@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
@@ -125,7 +126,7 @@ export function buildWorkflow(goal, goalMode, extraStatuses = [], options = {}) 
     `  max_concurrent_agents: ${maxConcurrentAgents}`,
     `  max_turns: ${maxTurns}`,
     "codex:",
-    "  command: codex app-server",
+    "  command: codex exec --dangerously-bypass-approvals-and-sandbox \"$SYMPHONY_ISSUE_PROMPT\"",
     "---",
     "",
     `# Workflow: ${slugTitle(goal)}`,
@@ -177,31 +178,67 @@ export function buildWorkflow(goal, goalMode, extraStatuses = [], options = {}) 
 
 export function parseWorkflowConfig(markdown) {
   const config = {
-    tracker: { kind: "linear", project_slug: "" },
+    tracker: { kind: "linear", project_slug: "", active_states: ["Todo", "In Progress", "Merging", "Rework"], terminal_states: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"] },
+    polling: { interval_ms: 30000 },
     workspace: { root: "~/code/workspaces" },
-    agent: { max_concurrent_agents: 3, max_turns: 20 },
-    codex: { command: "codex app-server" },
+    hooks: {},
+    agent: { max_concurrent_agents: 3, max_turns: 20, max_retry_backoff_ms: 300000 },
+    codex: { command: "codex exec --dangerously-bypass-approvals-and-sandbox \"$SYMPHONY_ISSUE_PROMPT\"" },
   };
   if (!markdown.startsWith("---\n")) return config;
   const end = markdown.indexOf("\n---", 4);
   if (end === -1) return config;
   const lines = markdown.slice(4, end).split(/\r?\n/);
   let section = "";
-  for (const line of lines) {
+  let pendingListKey = "";
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     const sectionMatch = line.match(/^([A-Za-z_][A-Za-z0-9_-]*):\s*$/);
     if (sectionMatch) {
       section = sectionMatch[1];
+      pendingListKey = "";
       if (!config[section]) config[section] = {};
+      continue;
+    }
+    const listItemMatch = line.match(/^\s+-\s*(.*)$/);
+    if (listItemMatch && section && pendingListKey && Array.isArray(config[section][pendingListKey])) {
+      config[section][pendingListKey].push(coerceScalar(listItemMatch[1]));
       continue;
     }
     const valueMatch = line.match(/^\s+([A-Za-z_][A-Za-z0-9_-]*):\s*(.*)$/);
     if (!valueMatch || !section) continue;
     const [, key, rawValue] = valueMatch;
-    const unquoted = rawValue.replace(/^["']|["']$/g, "");
-    const numeric = Number(unquoted);
-    config[section][key] = Number.isFinite(numeric) && unquoted.trim() !== "" ? numeric : unquoted;
+    if (rawValue.trim() === "|") {
+      const block = [];
+      while (lines[index + 1]?.match(/^\s{4,}/)) {
+        index += 1;
+        block.push(lines[index].replace(/^\s{4}/, ""));
+      }
+      config[section][key] = block.join("\n").trimEnd();
+      pendingListKey = "";
+      continue;
+    }
+    if (rawValue.trim() === "") {
+      config[section][key] = [];
+      pendingListKey = key;
+      continue;
+    }
+    config[section][key] = coerceScalar(rawValue);
+    pendingListKey = "";
   }
   return config;
+}
+
+function coerceScalar(value) {
+  const unquoted = String(value).trim().replace(/^["']|["']$/g, "");
+  const numeric = Number(unquoted);
+  return Number.isFinite(numeric) && unquoted !== "" ? numeric : unquoted;
+}
+
+export function workflowPromptTemplate(markdown) {
+  if (!markdown.startsWith("---\n")) return markdown.trim();
+  const end = markdown.indexOf("\n---", 4);
+  return end === -1 ? markdown.trim() : markdown.slice(end + 4).trim();
 }
 
 export function parseWorkflow(markdown) {
@@ -707,6 +744,183 @@ async function updateLinearIssueStatus(apiKey, issueId, stateId) {
   return data.issueUpdate.issue;
 }
 
+function projectSlugFromUrl(value) {
+  if (!value) return "";
+  return String(value).replace(/\/issues\/?$/, "").replace(/\/$/, "").match(/-([0-9A-Za-z]{6,})(?:\/)?$/)?.[1] ?? "";
+}
+
+export function normalizeLinearIssue(issue) {
+  return {
+    id: issue.id,
+    identifier: issue.identifier,
+    title: issue.title,
+    description: issue.description ?? "",
+    priority: issue.priority ?? null,
+    state: issue.state?.name ?? issue.state ?? "",
+    branchName: issue.branchName ?? null,
+    url: issue.url ?? null,
+    labels: issue.labels?.nodes?.map((label) => label.name?.toLowerCase()).filter(Boolean) ?? [],
+    teamId: issue.team?.id ?? null,
+    createdAt: issue.createdAt ?? null,
+    updatedAt: issue.updatedAt ?? null,
+  };
+}
+
+export async function fetchLinearCandidateIssues(apiKey, config) {
+  const projectSlug = config.tracker.project_slug && config.tracker.project_slug !== "pending"
+    ? config.tracker.project_slug
+    : projectSlugFromUrl(process.env.LINEAR_PROJECT_URL);
+  if (!projectSlug) throw new Error("tracker.project_slug or LINEAR_PROJECT_URL is required for polling.");
+  const activeStates = config.tracker.active_states ?? ["Todo", "In Progress"];
+  const query = `
+    query ProjectIssues($projectSlug: String!) {
+      projects(filter: { slugId: { eq: $projectSlug } }) {
+        nodes {
+          id
+          name
+          slugId
+          url
+          issues {
+            nodes {
+              id
+              identifier
+              title
+              description
+              priority
+              branchName
+              url
+              createdAt
+              updatedAt
+              state { name }
+              team { id name key }
+              labels { nodes { name } }
+            }
+          }
+        }
+      }
+    }
+  `;
+  const data = await graphql(apiKey, query, { projectSlug });
+  const issues = data.projects.nodes.flatMap((project) => project.issues.nodes).map(normalizeLinearIssue);
+  const active = new Set(activeStates.map((state) => state.toLowerCase()));
+  return issues.filter((issue) => active.has(issue.state.toLowerCase())).sort(compareLinearIssues);
+}
+
+function compareLinearIssues(left, right) {
+  const leftPriority = left.priority ?? 999;
+  const rightPriority = right.priority ?? 999;
+  if (leftPriority !== rightPriority) return leftPriority - rightPriority;
+  const leftCreated = left.createdAt ?? "";
+  const rightCreated = right.createdAt ?? "";
+  if (leftCreated !== rightCreated) return leftCreated.localeCompare(rightCreated);
+  return left.identifier.localeCompare(right.identifier);
+}
+
+export function workspaceKey(identifier) {
+  return String(identifier).replace(/[^A-Za-z0-9._-]/g, "_");
+}
+
+function expandLocalPath(value, baseDir = process.cwd()) {
+  let result = String(value || "");
+  if (result.startsWith("~/")) result = path.join(os.homedir(), result.slice(2));
+  result = result.replace(/\$([A-Za-z_][A-Za-z0-9_]*)/g, (_match, name) => process.env[name] ?? "");
+  return path.isAbsolute(result) ? result : path.resolve(baseDir, result);
+}
+
+export function workspacePathForIssue(config, issue, baseDir = process.cwd()) {
+  return path.join(expandLocalPath(config.workspace.root, baseDir), workspaceKey(issue.identifier));
+}
+
+export function renderIssuePrompt(template, issue, attempt = null) {
+  let rendered = template || "You are working on Linear issue {{ issue.identifier }}.";
+  rendered = rendered.replace(/{%\s*if\s+attempt\s*%}([\s\S]*?){%\s*endif\s*%}/g, attempt ? "$1" : "");
+  rendered = rendered.replaceAll("{{ attempt }}", String(attempt ?? ""));
+  rendered = rendered.replace(/{{\s*issue\.([A-Za-z_][A-Za-z0-9_]*)\s*}}/g, (_match, key) => {
+    const value = issue[key];
+    return Array.isArray(value) ? value.join(", ") : String(value ?? "");
+  });
+  return rendered;
+}
+
+export function prepareWorkspace(config, issue, options = {}) {
+  const workflowDir = options.workflowDir ?? process.cwd();
+  const workspacePath = workspacePathForIssue(config, issue, workflowDir);
+  const createdNow = !fs.existsSync(workspacePath);
+  fs.mkdirSync(workspacePath, { recursive: true });
+  if (createdNow && config.hooks.after_create && !options.skipHooks) {
+    execFileSync("sh", ["-lc", config.hooks.after_create], { cwd: workspacePath, stdio: "inherit", env: process.env });
+  }
+  return { path: workspacePath, createdNow };
+}
+
+function runHook(script, cwd, env) {
+  if (!script) return null;
+  execFileSync("sh", ["-lc", script], { cwd, stdio: "inherit", env });
+  return { ok: true };
+}
+
+function runAgentCommand(command, cwd, prompt, env, options = {}) {
+  if (options.dryRunAgent) return { skipped: true, command };
+  execFileSync("sh", ["-lc", command], {
+    cwd,
+    stdio: "inherit",
+    env: {
+      ...env,
+      SYMPHONY_ISSUE_PROMPT: prompt,
+      LWO_ISSUE_PROMPT: prompt,
+    },
+  });
+  return { ok: true, command };
+}
+
+export async function dispatchLinearIssue(apiKey, workflowMarkdown, issue, options = {}) {
+  const config = parseWorkflowConfig(workflowMarkdown);
+  const workflowDir = options.workflowDir ?? process.cwd();
+  let activeIssue = { ...issue };
+  const result = { issue: issue.identifier, state: issue.state };
+  if (issue.state.toLowerCase() === "todo") {
+    const stateId = await findStateId(apiKey, issue.teamId, "In Progress");
+    if (!stateId) throw new Error(`No Linear workflow state named In Progress was found for team ${issue.teamId}.`);
+    result.linear = await updateLinearIssueStatus(apiKey, issue.id, stateId);
+    activeIssue.state = "In Progress";
+  }
+  const workspace = prepareWorkspace(config, activeIssue, { workflowDir, skipHooks: options.skipHooks });
+  result.workspace = workspace.path;
+  const workpadIssue = {
+    key: activeIssue.identifier,
+    status: activeIssue.state,
+    acceptance: activeIssue.description || activeIssue.title,
+  };
+  result.workpad = await ensureLinearWorkpad(apiKey, activeIssue.id, workpadIssue, {
+    branch: workspace.path,
+    note: `Claimed by poller in ${workspace.path}.`,
+  });
+  const env = { ...process.env, LINEAR_API_KEY: apiKey, SYMPHONY_ISSUE_ID: activeIssue.id, SYMPHONY_ISSUE_IDENTIFIER: activeIssue.identifier };
+  if (!options.skipHooks) runHook(config.hooks.before_run, workspace.path, env);
+  const prompt = renderIssuePrompt(workflowPromptTemplate(workflowMarkdown), activeIssue, options.attempt ?? null);
+  result.agent = runAgentCommand(config.codex.command, workspace.path, prompt, env, { dryRunAgent: options.dryRunAgent });
+  if (!options.skipHooks) runHook(config.hooks.after_run, workspace.path, env);
+  return result;
+}
+
+export async function pollLinearOnce(workflowPath, options = {}) {
+  const workflowMarkdown = fs.readFileSync(workflowPath, "utf8");
+  const config = parseWorkflowConfig(workflowMarkdown);
+  const apiKey = requireValue(process.env.LINEAR_API_KEY, "LINEAR_API_KEY is required for polling.");
+  const candidates = await fetchLinearCandidateIssues(apiKey, config);
+  const maxAgents = Number(options["max-concurrent-agents"] ?? config.agent.max_concurrent_agents);
+  const selected = candidates.slice(0, Math.max(0, maxAgents));
+  const results = [];
+  for (const issue of selected) {
+    results.push(await dispatchLinearIssue(apiKey, workflowMarkdown, issue, {
+      workflowDir: path.dirname(path.resolve(workflowPath)),
+      dryRunAgent: options["dry-run-agent"],
+      skipHooks: options["skip-hooks"],
+    }));
+  }
+  return { candidates: candidates.length, dispatched: results.length, results };
+}
+
 async function findLinearWorkpadComment(apiKey, issueId) {
   const query = `
     query IssueComments($id: String!) {
@@ -769,7 +983,7 @@ function parseOptions(args) {
       continue;
     }
     const key = arg.slice(2);
-    if (["apply", "apply-linear", "checkout", "local-only", "hyperlink"].includes(key)) {
+    if (["apply", "apply-linear", "checkout", "local-only", "hyperlink", "once", "dry-run-agent", "skip-hooks"].includes(key)) {
       values[key] = true;
     } else {
       values[key] = args[index + 1];
@@ -1032,6 +1246,27 @@ export async function run(argv) {
       nextRefresh: options["next-refresh"],
     }));
     return;
+  }
+  if (command === "poll") {
+    const workflow = options._[0] ?? "WORKFLOW.md";
+    console.log(JSON.stringify(await pollLinearOnce(workflow, options), null, 2));
+    return;
+  }
+  if (command === "daemon") {
+    const workflow = options._[0] ?? "WORKFLOW.md";
+    while (true) {
+      const startedAt = new Date().toISOString();
+      try {
+        const result = await pollLinearOnce(workflow, options);
+        console.log(JSON.stringify({ startedAt, ...result }, null, 2));
+      } catch (error) {
+        console.error(JSON.stringify({ startedAt, error: error.message }));
+      }
+      if (options.once) return;
+      const config = parseWorkflowConfig(fs.readFileSync(workflow, "utf8"));
+      const interval = Number(options["interval-ms"] ?? config.polling.interval_ms ?? 30000);
+      await new Promise((resolve) => setTimeout(resolve, interval));
+    }
   }
   if (command === "set-status") {
     const [workflow, issueKey, status] = options._;

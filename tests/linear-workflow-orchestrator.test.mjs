@@ -15,6 +15,7 @@ import {
   linearIssueUrl,
   parseWorkflow,
   parseWorkflowConfig,
+  pollLinearOnce,
   preflightQuestions,
   projectIdFromUrl,
   branchNameForIssue,
@@ -61,7 +62,28 @@ test("workflow config parses agent concurrency and turn budget", () => {
   assert.equal(config.tracker.kind, "linear");
   assert.equal(config.agent.max_concurrent_agents, 10);
   assert.equal(config.agent.max_turns, 20);
-  assert.equal(config.codex.command, "codex app-server");
+  assert.match(config.codex.command, /codex exec/);
+});
+
+test("workflow config parses lists and hook block scalars", () => {
+  const workflow = [
+    "---",
+    "tracker:",
+    "  kind: linear",
+    "  active_states:",
+    "    - Todo",
+    "    - In Progress",
+    "hooks:",
+    "  after_create: |",
+    "    git clone example .",
+    "    npm install",
+    "---",
+    "Prompt",
+  ].join("\n");
+  const config = parseWorkflowConfig(workflow);
+
+  assert.deepEqual(config.tracker.active_states, ["Todo", "In Progress"]);
+  assert.equal(config.hooks.after_create, "git clone example .\nnpm install");
 });
 
 test("build issue inputs include dependencies and project uuid", () => {
@@ -445,6 +467,115 @@ test("sync-linear apply resolves team and creates project from api key only", as
 
   assert.ok(queries.some((query) => query.includes("query Teams")));
   assert.ok(queries.some((query) => query.includes("ProjectCreate")));
+});
+
+test("poll dispatches Linear Todo issue into workspace without prompting", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "lwo-poll-"));
+  const workflowPath = join(tempDir, "WORKFLOW.md");
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.LINEAR_API_KEY;
+  const originalProjectUrl = process.env.LINEAR_PROJECT_URL;
+  const queries = [];
+
+  writeFileSync(workflowPath, [
+    "---",
+    "tracker:",
+    "  kind: linear",
+    "  project_slug: abc123",
+    "  active_states:",
+    "    - Todo",
+    "    - In Progress",
+    "polling:",
+    "  interval_ms: 5000",
+    "workspace:",
+    `  root: ${join(tempDir, "workspaces")}`,
+    "agent:",
+    "  max_concurrent_agents: 1",
+    "  max_turns: 2",
+    "codex:",
+    "  command: echo \"$SYMPHONY_ISSUE_IDENTIFIER\" > agent-ran.txt",
+    "---",
+    "You are working on {{ issue.identifier }}: {{ issue.title }}",
+  ].join("\n"));
+
+  process.env.LINEAR_API_KEY = "lin_api_test";
+  delete process.env.LINEAR_PROJECT_URL;
+  globalThis.fetch = async (_url, options) => {
+    const body = JSON.parse(options.body);
+    queries.push(body.query);
+
+    if (body.query.includes("ProjectIssues")) {
+      return new Response(
+        JSON.stringify({
+          data: {
+            projects: {
+              nodes: [{
+                id: "project-1",
+                issues: {
+                  nodes: [{
+                    id: "issue-id-1",
+                    identifier: "HOW-1",
+                    title: "Build bookmark CLI",
+                    description: "Acceptance from Linear",
+                    priority: 1,
+                    url: "https://linear.app/acme/issue/HOW-1/test",
+                    createdAt: "2026-05-07T00:00:00.000Z",
+                    updatedAt: "2026-05-07T00:00:00.000Z",
+                    state: { name: "Todo" },
+                    team: { id: "team-1", name: "Engineering", key: "ENG" },
+                    labels: { nodes: [{ name: "symphony" }] },
+                  }],
+                },
+              }],
+            },
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (body.query.includes("WorkflowStates")) {
+      return new Response(
+        JSON.stringify({ data: { workflowStates: { nodes: [{ id: "state-progress", name: "In Progress" }] } } }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (body.query.includes("IssueUpdate")) {
+      return new Response(
+        JSON.stringify({ data: { issueUpdate: { success: true, issue: { identifier: "HOW-1", state: { name: "In Progress" } } } } }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (body.query.includes("IssueComments")) {
+      return new Response(
+        JSON.stringify({ data: { issue: { comments: { nodes: [] } } } }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (body.query.includes("CommentCreate")) {
+      assert.match(body.variables.input.body, /## Codex Workpad/);
+      return new Response(
+        JSON.stringify({ data: { commentCreate: { success: true, comment: { id: "comment-1", body: body.variables.input.body } } } }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    throw new Error(`Unexpected query: ${body.query}`);
+  };
+
+  try {
+    const result = await pollLinearOnce(workflowPath);
+    assert.equal(result.dispatched, 1);
+    assert.equal(readFileSync(join(tempDir, "workspaces", "HOW-1", "agent-ran.txt"), "utf8").trim(), "HOW-1");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalApiKey === undefined) delete process.env.LINEAR_API_KEY;
+    else process.env.LINEAR_API_KEY = originalApiKey;
+    if (originalProjectUrl === undefined) delete process.env.LINEAR_PROJECT_URL;
+    else process.env.LINEAR_PROJECT_URL = originalProjectUrl;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+
+  assert.ok(queries.some((query) => query.includes("ProjectIssues")));
+  assert.ok(queries.some((query) => query.includes("CommentCreate")));
 });
 
 test("start-issue marks a ready issue in progress and assigns a branch without checkout", async () => {

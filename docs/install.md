@@ -87,6 +87,8 @@ When goal mode is on, the skill should bypass routine "continue?" prompts after 
 
 For Linear setup, `LINEAR_API_KEY` is enough for `sync-linear --apply` in the common case. If `LINEAR_TEAM_ID` is missing, the helper uses the first team visible to the API key. If `LINEAR_PROJECT_URL` is missing, the helper creates a Linear project for the workflow and uses that project id/url for issue registration.
 
+For Symphony-style unattended execution, run `poll WORKFLOW.md` for one dispatch tick or `daemon WORKFLOW.md` for a continuous loop. The poller reads Linear issues from `tracker.project_slug`, moves eligible Todo issues to In Progress, prepares `workspace.root/<issue>`, runs configured hooks, updates the single `## Codex Workpad`, and executes `codex.command` in that issue workspace. This is the mode to use when Linear should drive development instead of acting as a passive mirror.
+
 At the start of a workflow, the skill should ask:
 
 - whether to use GitHub issue branches or local worktrees

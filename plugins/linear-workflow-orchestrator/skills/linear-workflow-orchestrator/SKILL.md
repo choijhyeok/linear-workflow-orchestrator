@@ -17,12 +17,26 @@ The intended command shape is:
 
 If goal mode is on, keep checking whether more development work remains after the current workflow is complete. When the product is not finished, create the next `workflow.md` slice and continue with the same Linear/status process.
 
+## Startup Questions
+
+Ask these before creating `workflow.md` or doing external writes:
+
+1. Execution workspace:
+   - GitHub issue branch flow: create one branch per Linear issue and push each branch/PR.
+   - Local worktree flow: create one local worktree per Linear issue when GitHub is not connected or the user wants isolated local execution.
+2. Linear credential source:
+   - already exported in the shell
+   - stored in a user-named env file
+   - provided directly by the user for this run
+3. Goal mode:
+   - on: continue discovering and registering follow-up workflow slices until the product is complete
+   - off: stop after this workflow is complete
+
 ## Required User Inputs
 
-Collect these before doing external writes:
+Confirm these before doing external writes:
 
 - Development goal: what the user wants built.
-- Goal mode: whether Codex should continue discovering follow-up workflow slices until the product is complete.
 - GitHub authority: whether Codex may create branches, worktrees, commits, PRs, or merge-related artifacts.
 - Linear authority: whether Codex may create or update Linear issues.
 - Linear credentials when Linear writes are requested:
@@ -52,34 +66,63 @@ Every workflow starts with these statuses unless the user asks to add more:
 
 1. Restate the development goal and authority assumptions.
 2. Create or update `workflow.md` at the repository root.
-3. Include:
+3. Record startup answers before creating Linear issues or starting work:
+
+```bash
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs record-preflight workflow.md --workspace github --credentials exported --goal-mode off
+```
+
+4. Include:
    - goal mode value
    - GitHub/Linear authority checklist
    - credential sources without secret values
    - status model
-   - execution table with issue IDs, titles, lane type, dependencies, status, and acceptance criteria
+   - execution table with issue IDs, titles, lane type, dependencies, status, Linear issue, Branch/Worktree, and acceptance criteria
    - goal-mode continuation gate
-4. If Linear writes are authorized and credentials exist, run:
+5. If Linear writes are authorized and credentials exist, run:
 
 ```bash
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs sync-linear workflow.md --apply
 ```
 
-5. If Linear writes are not authorized or credentials are missing, run a dry-run instead:
+6. If Linear writes are not authorized or credentials are missing, run a dry-run instead:
 
 ```bash
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs sync-linear workflow.md --dry-run-out linear-issues.preview.json
 ```
 
-6. Use the issue dependency graph:
-   - start independent Todo issues in parallel when that improves throughput
-   - keep dependent work serial
-   - move implemented work to Review
-   - move review failures to Rework
-   - move accepted work to Merging
-   - mark obsolete work as Canceled or Duplicate
-7. Before claiming completion, audit all workflow acceptance criteria and Linear issue statuses.
-8. In goal mode, create a follow-up workflow when the current audit finds remaining product work.
+7. After Linear backlog registration, do not implement directly on `main`.
+8. Use the issue dependency graph:
+   - run `ready` to identify Backlog/Todo issues whose dependencies are Done
+   - run `wave` to identify dependency-ready parallel issues that can be assigned together
+   - move only the selected ready issue or ready parallel wave into execution
+   - for serial lanes, start one issue at a time
+   - for parallel lanes, start all dependency-satisfied parallel siblings together when the user wants Symphony-style concurrent Codex work
+9. Select work before starting it:
+
+```bash
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs select-issue workflow.md LWO-004
+```
+
+10. For each started issue, run `start-issue` to record the branch/worktree and move it to In Progress:
+
+```bash
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs start-issue workflow.md LWO-004 --mode github --checkout
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs start-issue workflow.md LWO-004 --mode worktree --worktree-dir ../project-HOW-76 --checkout
+```
+
+11. For Symphony-style concurrent work:
+   - assign each ready parallel issue to a separate Codex session/subagent/worktree
+   - each Codex lane owns exactly one Linear issue and its branch/worktree
+   - no lane may edit another lane's owned files unless the orchestrator updates the workflow
+   - merge only after all parallel lane reviews pass
+12. Move implemented work to Review and use a different Codex agent/session as reviewer.
+13. Move review failures to Rework and keep the issue branch/worktree active until fixed.
+14. Move accepted work to Merging only after review passes; `set-status ... Merging` requires `--reviewed-by`.
+15. Merge using the issue branch/PR or local worktree integration branch, never by committing unrelated completed work directly to `main`.
+16. Mark obsolete work as Canceled or Duplicate.
+17. Before claiming completion, audit all workflow acceptance criteria and Linear issue statuses.
+18. In goal mode, create a follow-up workflow when the current audit finds remaining product work.
 
 ## Helper CLI
 
@@ -87,14 +130,22 @@ The helper script can initialize a deterministic workflow template and parse/syn
 
 ```bash
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs init "Build a Codex plugin" --goal-mode on --out workflow.md
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs preflight
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs record-preflight workflow.md --workspace github --credentials exported --goal-mode on
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs parse workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs sync-linear workflow.md --dry-run-out linear-issues.preview.json
-node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs set-status workflow.md LWO-004 "In Progress"
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs ready workflow.md
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs wave workflow.md
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs select-issue workflow.md LWO-004
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs start-issue workflow.md LWO-004 --mode github --checkout
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs start-issue workflow.md LWO-004 --mode worktree --worktree-dir ../project-HOW-76 --checkout
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs set-status workflow.md LWO-004 Review
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs set-status workflow.md LWO-004 Merging --reviewed-by codex-reviewer
 LINEAR_API_KEY=... LINEAR_TEAM_ID=... node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs set-status workflow.md LWO-004 Review --linear-issue ABC-123 --apply-linear
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs statusline workflow.md
 ```
 
-The agent should still refine `workflow.md` with domain-specific tasks before creating Linear issues.
+The agent should still refine `workflow.md` with domain-specific tasks before creating Linear issues. Active implementation must be selected with `select-issue` before `start-issue`.
 
 ## Terminal Status Line
 

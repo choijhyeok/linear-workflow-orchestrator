@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 
 export const DEFAULT_STATUSES = [
   ["Backlog", "All discovered work before it is selected for execution."],
@@ -23,6 +24,8 @@ export const ACTIVE_STATUS_PRIORITY = [
   "Todo",
   "Backlog",
 ];
+const ACTIVE_EXECUTION_STATUSES = new Set(["todo", "in progress", "rework", "review", "merging"]);
+const TERMINAL_STATUSES = new Set(["done", "canceled", "duplicate"]);
 
 export function parseBool(value) {
   const normalized = String(value).trim().toLowerCase();
@@ -43,7 +46,8 @@ function cells(line) {
 function formatIssueRow(issue) {
   const deps = issue.dependsOn.length ? issue.dependsOn.join(", ") : "-";
   const linearIssue = issue.linearIssue || "-";
-  return `| ${issue.key} | ${issue.title} | ${issue.lane} | ${deps} | ${issue.status} | ${linearIssue} | ${issue.acceptance} |`;
+  const branch = issue.branch || "-";
+  return `| ${issue.key} | ${issue.title} | ${issue.lane} | ${deps} | ${issue.status} | ${linearIssue} | ${branch} | ${issue.acceptance} |`;
 }
 
 export function buildWorkflow(goal, goalMode, extraStatuses = []) {
@@ -60,6 +64,7 @@ export function buildWorkflow(goal, goalMode, extraStatuses = []) {
       status: "Backlog",
       acceptance: "Goal, goal mode, GitHub authority, and Linear authority are explicit.",
       linearIssue: "",
+      branch: "",
     },
     {
       key: "LWO-002",
@@ -69,6 +74,7 @@ export function buildWorkflow(goal, goalMode, extraStatuses = []) {
       status: "Backlog",
       acceptance: "workflow.md describes tasks, dependencies, statuses, and acceptance criteria.",
       linearIssue: "",
+      branch: "",
     },
     {
       key: "LWO-003",
@@ -78,6 +84,7 @@ export function buildWorkflow(goal, goalMode, extraStatuses = []) {
       status: "Backlog",
       acceptance: "Linear issues are created or a dry-run payload is available for review.",
       linearIssue: "",
+      branch: "",
     },
     {
       key: "LWO-004",
@@ -87,6 +94,7 @@ export function buildWorkflow(goal, goalMode, extraStatuses = []) {
       status: "Backlog",
       acceptance: "Parallel-ready tasks are implemented without violating dependencies.",
       linearIssue: "",
+      branch: "",
     },
     {
       key: "LWO-005",
@@ -96,6 +104,7 @@ export function buildWorkflow(goal, goalMode, extraStatuses = []) {
       status: "Backlog",
       acceptance: "Review findings are resolved and merge readiness is verified.",
       linearIssue: "",
+      branch: "",
     },
   ];
 
@@ -110,8 +119,15 @@ export function buildWorkflow(goal, goalMode, extraStatuses = []) {
     "",
     `- Goal mode: ${goalMode ? "on" : "off"}`,
     "",
+    "## Startup Answers",
+    "",
+    "- Execution workspace: pending",
+    "- Linear credentials: pending",
+    `- Goal mode: ${goalMode ? "on" : "off"}`,
+    "",
     "## Authority Checklist",
     "",
+    "- [ ] Startup questions answered: GitHub branch flow or local worktree flow, Linear credential source, and goal mode.",
     "- [ ] GitHub authority confirmed for branches, worktrees, commits, PRs, and merge checks.",
     "- [ ] Linear authority confirmed for issue creation and status updates.",
     "- [ ] `LINEAR_API_KEY` source confirmed without exposing the secret.",
@@ -126,8 +142,8 @@ export function buildWorkflow(goal, goalMode, extraStatuses = []) {
     "",
     "## Execution Plan",
     "",
-    "| ID | Title | Lane | Depends On | Status | Linear Issue | Acceptance Criteria |",
-    "| --- | --- | --- | --- | --- | --- | --- |",
+    "| ID | Title | Lane | Depends On | Status | Linear Issue | Branch/Worktree | Acceptance Criteria |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ...issues.map(formatIssueRow),
     "",
     "## Goal Mode Continuation Gate",
@@ -151,7 +167,8 @@ export function parseWorkflow(markdown) {
     if (inPlan && line.startsWith("## ")) break;
     if (!inPlan || !line.trim().startsWith("|")) continue;
     const row = cells(line);
-    if (row.length !== 7 || row[0] === "ID" || row[0] === "---") continue;
+    if (![7, 8].includes(row.length) || row[0] === "ID" || row[0] === "---") continue;
+    const hasBranchColumn = row.length === 8;
     issues.push({
       key: row[0],
       title: row[1],
@@ -159,7 +176,8 @@ export function parseWorkflow(markdown) {
       dependsOn: row[3].split(",").map((dep) => dep.trim()).filter((dep) => dep && dep !== "-"),
       status: row[4],
       linearIssue: row[5] === "-" ? "" : row[5],
-      acceptance: row[6],
+      branch: hasBranchColumn && row[6] !== "-" ? row[6] : "",
+      acceptance: hasBranchColumn ? row[7] : row[6],
     });
   }
   return issues;
@@ -170,7 +188,7 @@ export function currentIssue(issues) {
     const match = issues.find((issue) => issue.status.toLowerCase() === status.toLowerCase());
     if (match) return match;
   }
-  return issues.find((issue) => !["done", "canceled", "duplicate"].includes(issue.status.toLowerCase())) ?? null;
+  return issues.find((issue) => !TERMINAL_STATUSES.has(issue.status.toLowerCase())) ?? null;
 }
 
 export function formatStatusLine(issue, options = {}) {
@@ -192,7 +210,7 @@ export function updateWorkflowStatus(markdown, issueKey, status, linearIssue = "
     if (inPlan && line.startsWith("## ")) inPlan = false;
     if (inPlan && line.trim().startsWith("|")) {
       const row = cells(line);
-      if (row.length === 7 && row[0] === issueKey) {
+      if ([7, 8].includes(row.length) && row[0] === issueKey) {
         row[4] = status;
         if (linearIssue) row[5] = linearIssue;
         changed = true;
@@ -202,6 +220,29 @@ export function updateWorkflowStatus(markdown, issueKey, status, linearIssue = "
     return line;
   });
   if (!changed) throw new Error(`issue key ${issueKey} was not found in the Execution Plan table`);
+  return updated.join("\n");
+}
+
+export function updateWorkflowBranch(markdown, issueKey, branchOrWorktree) {
+  let inPlan = false;
+  let changed = false;
+  const updated = markdown.split(/\r?\n/).map((line) => {
+    if (line.trim() === "## Execution Plan") {
+      inPlan = true;
+      return line;
+    }
+    if (inPlan && line.startsWith("## ")) inPlan = false;
+    if (inPlan && line.trim().startsWith("|")) {
+      const row = cells(line);
+      if (row.length === 8 && row[0] === issueKey) {
+        row[6] = branchOrWorktree;
+        changed = true;
+        return `| ${row.join(" | ")} |`;
+      }
+    }
+    return line;
+  });
+  if (!changed) throw new Error(`issue key ${issueKey} was not found in the Execution Plan table with Branch/Worktree column`);
   return updated.join("\n");
 }
 
@@ -215,13 +256,132 @@ export function updateWorkflowLinearIssues(markdown, createdIssuesByKey) {
     if (inPlan && line.startsWith("## ")) inPlan = false;
     if (inPlan && line.trim().startsWith("|")) {
       const row = cells(line);
-      if (row.length === 7 && createdIssuesByKey.has(row[0])) {
+      if ([7, 8].includes(row.length) && createdIssuesByKey.has(row[0])) {
         row[5] = createdIssuesByKey.get(row[0]);
         return `| ${row.join(" | ")} |`;
       }
     }
     return line;
   }).join("\n");
+}
+
+export function slugifyBranchPart(value) {
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48) || "issue";
+}
+
+export function branchNameForIssue(issue) {
+  const identifier = issue.linearIssue || issue.key;
+  return `issue/${slugifyBranchPart(identifier)}-${slugifyBranchPart(issue.title)}`;
+}
+
+export function readyIssues(issues) {
+  const done = new Set(issues.filter((issue) => issue.status.toLowerCase() === "done").map((issue) => issue.key));
+  return issues.filter((issue) => {
+    if (!["backlog", "todo"].includes(issue.status.toLowerCase())) return false;
+    return issue.dependsOn.every((dependency) => done.has(dependency));
+  });
+}
+
+export function parallelWave(issues) {
+  return readyIssues(issues).filter((issue) => issue.lane.toLowerCase() === "parallel");
+}
+
+export function hasActiveSerialIssue(issues, issueKey) {
+  return issues.some((issue) => {
+    if (issue.key === issueKey) return false;
+    if (issue.lane.toLowerCase() !== "serial") return false;
+    return ACTIVE_EXECUTION_STATUSES.has(issue.status.toLowerCase());
+  });
+}
+
+export function parseStartupAnswers(markdown) {
+  const answers = {};
+  let inSection = false;
+  for (const line of markdown.split(/\r?\n/)) {
+    if (line.trim() === "## Startup Answers") {
+      inSection = true;
+      continue;
+    }
+    if (inSection && line.startsWith("## ")) break;
+    if (!inSection || !line.trim().startsWith("- ")) continue;
+    const match = line.trim().match(/^- ([^:]+):\s*(.*)$/);
+    if (match) answers[slugifyBranchPart(match[1]).replaceAll("-", "_")] = match[2].trim();
+  }
+  return answers;
+}
+
+export function startupAnswersComplete(markdown) {
+  const answers = parseStartupAnswers(markdown);
+  return ["execution_workspace", "linear_credentials", "goal_mode"].every((key) => answers[key] && answers[key] !== "pending");
+}
+
+export function updateStartupAnswers(markdown, answers) {
+  const rows = [
+    `- Execution workspace: ${answers.workspace}`,
+    `- Linear credentials: ${answers.credentials}`,
+    `- Goal mode: ${answers.goalMode}`,
+  ];
+  if (!markdown.includes("## Startup Answers")) {
+    return markdown.replace(/\n## Authority Checklist\n/, `\n## Startup Answers\n\n${rows.join("\n")}\n\n## Authority Checklist\n`);
+  }
+  let inSection = false;
+  const updated = [];
+  for (const line of markdown.split(/\r?\n/)) {
+    if (line.trim() === "## Startup Answers") {
+      inSection = true;
+      updated.push(line, "", ...rows);
+      continue;
+    }
+    if (inSection && line.startsWith("## ")) {
+      inSection = false;
+      updated.push("", line);
+      continue;
+    }
+    if (!inSection) updated.push(line);
+  }
+  return updated.join("\n");
+}
+
+function requireStartupAnswers(markdown) {
+  if (!startupAnswersComplete(markdown)) {
+    throw new Error("Startup answers are required before this command. Run record-preflight first.");
+  }
+}
+
+function requireLinearIssue(issue, options) {
+  if (!issue.linearIssue && !options["local-only"]) {
+    throw new Error(`issue ${issue.key} must have a Linear issue identifier before execution; use --local-only to bypass Linear-backed execution`);
+  }
+}
+
+export function assertStatusTransition(issue, nextStatus, options = {}) {
+  const current = issue.status.toLowerCase();
+  const next = nextStatus.toLowerCase();
+  const allowed = {
+    backlog: new Set(["todo", "canceled", "duplicate"]),
+    todo: new Set(["in progress", "canceled", "duplicate"]),
+    "in progress": new Set(["review", "rework", "canceled"]),
+    rework: new Set(["in progress", "review", "canceled"]),
+    review: new Set(["rework", "merging", "canceled"]),
+    merging: new Set(["done", "rework"]),
+    done: new Set([]),
+    canceled: new Set([]),
+    duplicate: new Set([]),
+  };
+  if (current === next) return;
+  if (!allowed[current]?.has(next)) throw new Error(`invalid status transition for ${issue.key}: ${issue.status} -> ${nextStatus}`);
+  if (next === "merging" && !options["reviewed-by"]) throw new Error("--reviewed-by is required before moving Review to Merging");
+}
+
+function issueByKey(markdown, issueKey) {
+  const issue = parseWorkflow(markdown).find((item) => item.key === issueKey);
+  if (!issue) throw new Error(`issue key ${issueKey} was not found in the Execution Plan table`);
+  return issue;
 }
 
 export function projectIdFromUrl(value) {
@@ -356,7 +516,7 @@ function parseOptions(args) {
       continue;
     }
     const key = arg.slice(2);
-    if (["apply", "apply-linear"].includes(key)) {
+    if (["apply", "apply-linear", "checkout", "local-only"].includes(key)) {
       values[key] = true;
     } else {
       values[key] = args[index + 1];
@@ -369,6 +529,30 @@ function parseOptions(args) {
 function requireValue(value, message) {
   if (!value) throw new Error(message);
   return value;
+}
+
+export function preflightQuestions(env = process.env) {
+  return [
+    {
+      id: "execution_workspace",
+      question: "Use GitHub issue branches or local worktrees?",
+      options: ["github", "worktree"],
+    },
+    {
+      id: "linear_credentials",
+      question: "Where are Linear credentials?",
+      options: [
+        env.LINEAR_API_KEY && env.LINEAR_TEAM_ID ? "exported" : "not exported",
+        "env-file",
+        "user-input",
+      ],
+    },
+    {
+      id: "goal_mode",
+      question: "Use goal mode?",
+      options: ["on", "off"],
+    },
+  ];
 }
 
 export async function run(argv) {
@@ -386,8 +570,27 @@ export async function run(argv) {
     console.log(JSON.stringify(parseWorkflow(fs.readFileSync(workflow, "utf8")), null, 2));
     return;
   }
+  if (command === "preflight") {
+    console.log(JSON.stringify(preflightQuestions(), null, 2));
+    return;
+  }
+  if (command === "record-preflight") {
+    const workflow = requireValue(options._[0], "workflow path is required");
+    const workspace = requireValue(options.workspace, "--workspace is required");
+    const credentials = requireValue(options.credentials, "--credentials is required");
+    const goalMode = requireValue(options["goal-mode"], "--goal-mode is required");
+    if (!["github", "worktree"].includes(workspace)) throw new Error("--workspace must be github or worktree");
+    if (!["exported", "env-file", "user-input"].includes(credentials)) throw new Error("--credentials must be exported, env-file, or user-input");
+    parseBool(goalMode);
+    const updated = updateStartupAnswers(fs.readFileSync(workflow, "utf8"), { workspace, credentials, goalMode });
+    fs.writeFileSync(workflow, updated, "utf8");
+    console.log(JSON.stringify({ workflow, workspace, credentials, goalMode }, null, 2));
+    return;
+  }
   if (command === "sync-linear") {
     const workflow = requireValue(options._[0], "workflow path is required");
+    const workflowMarkdown = fs.readFileSync(workflow, "utf8");
+    requireStartupAnswers(workflowMarkdown);
     const teamId = options["team-id"] ?? process.env.LINEAR_TEAM_ID;
     const projectUrl = options["project-url"] ?? process.env.LINEAR_PROJECT_URL;
     requireValue(teamId, "LINEAR_TEAM_ID is required for Linear sync or dry-run payload generation.");
@@ -399,7 +602,6 @@ export async function run(argv) {
       stateId = await findStateId(apiKey, teamId, "Backlog");
       projectId = await findProjectId(apiKey, teamId, projectUrl);
     }
-    const workflowMarkdown = fs.readFileSync(workflow, "utf8");
     const pendingIssues = parseWorkflow(workflowMarkdown).filter((issue) => !issue.linearIssue);
     const issueInputs = buildIssueInputs(pendingIssues, workflow, teamId, projectUrl, stateId, projectId);
     if (options.apply) {
@@ -418,6 +620,89 @@ export async function run(argv) {
         console.log(JSON.stringify(dryRun, null, 2));
       }
     }
+    return;
+  }
+  if (command === "ready") {
+    const workflow = requireValue(options._[0], "workflow path is required");
+    console.log(JSON.stringify(readyIssues(parseWorkflow(fs.readFileSync(workflow, "utf8"))), null, 2));
+    return;
+  }
+  if (command === "wave") {
+    const workflow = requireValue(options._[0], "workflow path is required");
+    console.log(JSON.stringify(parallelWave(parseWorkflow(fs.readFileSync(workflow, "utf8"))), null, 2));
+    return;
+  }
+  if (command === "select-issue") {
+    const [workflow, issueKey] = options._;
+    requireValue(workflow, "workflow path is required");
+    requireValue(issueKey, "issue key is required");
+    const workflowMarkdown = fs.readFileSync(workflow, "utf8");
+    requireStartupAnswers(workflowMarkdown);
+    const issue = issueByKey(workflowMarkdown, issueKey);
+    requireLinearIssue(issue, options);
+    if (issue.lane.toLowerCase() === "serial" && hasActiveSerialIssue(parseWorkflow(workflowMarkdown), issueKey)) {
+      throw new Error("another serial issue is already active; finish it before selecting another serial issue");
+    }
+    const readyKeys = new Set(readyIssues(parseWorkflow(workflowMarkdown)).map((item) => item.key));
+    if (!readyKeys.has(issueKey) && issue.status.toLowerCase() !== "todo") {
+      throw new Error(`issue ${issueKey} is not ready; dependencies must be Done before selecting`);
+    }
+    fs.writeFileSync(workflow, updateWorkflowStatus(workflowMarkdown, issueKey, "Todo", issue.linearIssue), "utf8");
+    const result = { workflow, issueKey, status: "Todo", linearIssue: issue.linearIssue || null };
+    if (options["apply-linear"]) {
+      const apiKey = requireValue(process.env.LINEAR_API_KEY, "LINEAR_API_KEY is required when --apply-linear is used.");
+      const teamId = requireValue(options["team-id"] ?? process.env.LINEAR_TEAM_ID, "LINEAR_TEAM_ID is required when --apply-linear is used.");
+      const linearIssue = requireValue(issue.linearIssue, "Linear issue identifier is required before applying Linear status updates.");
+      const stateId = await findStateId(apiKey, teamId, "Todo");
+      if (!stateId) throw new Error("No Linear workflow state named Todo was found.");
+      result.linear = await updateLinearIssueStatus(apiKey, linearIssue, stateId);
+    }
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  if (command === "start-issue") {
+    const [workflow, issueKey] = options._;
+    requireValue(workflow, "workflow path is required");
+    requireValue(issueKey, "issue key is required");
+    const mode = options.mode ?? "github";
+    if (!["github", "worktree"].includes(mode)) throw new Error("--mode must be github or worktree");
+    let workflowMarkdown = fs.readFileSync(workflow, "utf8");
+    requireStartupAnswers(workflowMarkdown);
+    const issue = issueByKey(workflowMarkdown, issueKey);
+    requireLinearIssue(issue, options);
+    if (issue.status.toLowerCase() !== "todo") {
+      throw new Error(`issue ${issueKey} must be Todo before starting; run select-issue first`);
+    }
+    const branchName = options.branch ?? branchNameForIssue(issue);
+    const worktreePath = options["worktree-dir"] ?? path.join("..", `${path.basename(process.cwd())}-${slugifyBranchPart(issue.linearIssue || issue.key)}`);
+    const branchOrWorktree = mode === "worktree" ? worktreePath : branchName;
+    workflowMarkdown = updateWorkflowStatus(workflowMarkdown, issueKey, "In Progress", issue.linearIssue);
+    workflowMarkdown = updateWorkflowBranch(workflowMarkdown, issueKey, branchOrWorktree);
+    let targetWorkflow = workflow;
+    const result = { workflow, issueKey, status: "In Progress", mode, branch: branchName, worktree: mode === "worktree" ? worktreePath : null };
+    if (options.checkout) {
+      const base = options.base ?? "main";
+      if (mode === "github") {
+        execFileSync("git", ["checkout", "-B", branchName, base], { stdio: "inherit" });
+      } else {
+        execFileSync("git", ["worktree", "add", "-B", branchName, worktreePath, base], { stdio: "inherit" });
+        const workflowRelativePath = path.relative(process.cwd(), path.resolve(workflow));
+        targetWorkflow = path.join(worktreePath, workflowRelativePath);
+      }
+      result.checkedOut = true;
+    }
+    fs.writeFileSync(workflow, workflowMarkdown, "utf8");
+    if (targetWorkflow !== workflow) fs.writeFileSync(targetWorkflow, workflowMarkdown, "utf8");
+    result.workflow = targetWorkflow;
+    if (options["apply-linear"]) {
+      const apiKey = requireValue(process.env.LINEAR_API_KEY, "LINEAR_API_KEY is required when --apply-linear is used.");
+      const teamId = requireValue(options["team-id"] ?? process.env.LINEAR_TEAM_ID, "LINEAR_TEAM_ID is required when --apply-linear is used.");
+      const linearIssue = requireValue(issue.linearIssue, "Linear issue identifier is required before applying Linear status updates.");
+      const stateId = await findStateId(apiKey, teamId, "In Progress");
+      if (!stateId) throw new Error("No Linear workflow state named In Progress was found.");
+      result.linear = await updateLinearIssueStatus(apiKey, linearIssue, stateId);
+    }
+    console.log(JSON.stringify(result, null, 2));
     return;
   }
   if (command === "statusline") {
@@ -439,7 +724,10 @@ export async function run(argv) {
     requireValue(workflow, "workflow path is required");
     requireValue(issueKey, "issue key is required");
     requireValue(status, "status is required");
-    const updated = updateWorkflowStatus(fs.readFileSync(workflow, "utf8"), issueKey, status, options["linear-issue"]);
+    const workflowMarkdown = fs.readFileSync(workflow, "utf8");
+    const issue = issueByKey(workflowMarkdown, issueKey);
+    assertStatusTransition(issue, status, options);
+    const updated = updateWorkflowStatus(workflowMarkdown, issueKey, status, options["linear-issue"]);
     fs.writeFileSync(workflow, updated, "utf8");
     const result = { workflow, issueKey, status, linearIssue: options["linear-issue"] ?? null };
     if (options["apply-linear"]) {

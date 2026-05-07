@@ -25,7 +25,7 @@ The status line chooses the first issue in this priority order:
 5. Todo
 6. Backlog
 
-Canceled and Duplicate issues are ignored unless no workflow issues exist.
+Done, Canceled, and Duplicate issues are terminal and do not occupy the active statusline slot.
 
 ## Host Wiring
 

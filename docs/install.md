@@ -55,6 +55,25 @@ This writes `~/.codex/config.json`.
 
 The plugin uses Node.js standard library only. There is no Python package, no npm dependency install, and no build step.
 
+## Execution Model
+
+At the start of a workflow, the skill should ask:
+
+- whether to use GitHub issue branches or local worktrees
+- whether Linear credentials are exported, stored in an env file, or supplied by the user
+- whether goal mode is on
+
+After Linear backlog registration, active work must start through `start-issue` so the workflow records an issue-specific branch or worktree:
+
+```bash
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs ready workflow.md
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs wave workflow.md
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs select-issue workflow.md LWO-004
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs start-issue workflow.md LWO-004 --mode github --checkout
+```
+
+For concurrent Codex/Symphony-style work, start multiple dependency-ready `parallel` issues into separate branches or worktrees and assign one Codex session to each lane.
+
 ## Verification
 
 ```bash

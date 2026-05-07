@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -10,11 +11,28 @@ import {
   currentIssue,
   formatStatusLine,
   parseWorkflow,
+  preflightQuestions,
   projectIdFromUrl,
+  branchNameForIssue,
+  parallelWave,
+  readyIssues,
+  updateStartupAnswers,
+  updateWorkflowBranch,
   updateWorkflowLinearIssues,
   updateWorkflowStatus,
   run,
 } from "../plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs";
+
+function executableWorkflow(goal = "Build a Linear-managed Codex plugin") {
+  return updateWorkflowLinearIssues(
+    updateStartupAnswers(buildWorkflow(goal, false), {
+      workspace: "github",
+      credentials: "exported",
+      goalMode: "off",
+    }),
+    new Map([["LWO-001", "HOW-1"], ["LWO-002", "HOW-2"], ["LWO-003", "HOW-3"], ["LWO-004", "HOW-4"], ["LWO-005", "HOW-5"]]),
+  );
+}
 
 test("build and parse workflow round trip", () => {
   const workflow = buildWorkflow("Build a Linear-managed Codex plugin", true);
@@ -23,8 +41,10 @@ test("build and parse workflow round trip", () => {
   assert.equal(issues.length, 5);
   assert.equal(issues[0].key, "LWO-001");
   assert.equal(issues[0].status, "Backlog");
+  assert.equal(issues[0].branch, "");
   assert.deepEqual(issues[1].dependsOn, ["LWO-001"]);
   assert.match(workflow, /Goal mode: on/);
+  assert.match(workflow, /Branch\/Worktree/);
 });
 
 test("build issue inputs include dependencies and project uuid", () => {
@@ -85,6 +105,13 @@ test("authorization header preserves api key and bearer token", () => {
   assert.equal(authorizationHeader("Bearer token"), "Bearer token");
 });
 
+test("preflight questions cover workspace credentials and goal mode", () => {
+  const questions = preflightQuestions({ LINEAR_API_KEY: "key", LINEAR_TEAM_ID: "team" });
+
+  assert.deepEqual(questions.map((question) => question.id), ["execution_workspace", "linear_credentials", "goal_mode"]);
+  assert.equal(questions[1].options[0], "exported");
+});
+
 test("update workflow status changes matching row", () => {
   const workflow = buildWorkflow("Build a Linear-managed Codex plugin", true);
   const updated = updateWorkflowStatus(workflow, "LWO-004", "In Progress", "ABC-123");
@@ -94,6 +121,14 @@ test("update workflow status changes matching row", () => {
   assert.equal(issue.linearIssue, "ABC-123");
 });
 
+test("update workflow branch records the issue execution branch", () => {
+  const workflow = buildWorkflow("Build a Linear-managed Codex plugin", true);
+  const updated = updateWorkflowBranch(workflow, "LWO-004", "issue/abc-123-implement");
+  const issue = parseWorkflow(updated).find((item) => item.key === "LWO-004");
+
+  assert.equal(issue.branch, "issue/abc-123-implement");
+});
+
 test("update workflow linear issues records created identifiers", () => {
   const workflow = buildWorkflow("Build a Linear-managed Codex plugin", true);
   const updated = updateWorkflowLinearIssues(workflow, new Map([["LWO-002", "LWO-200"]]));
@@ -101,6 +136,33 @@ test("update workflow linear issues records created identifiers", () => {
 
   assert.equal(issues.find((item) => item.key === "LWO-001").linearIssue, "");
   assert.equal(issues.find((item) => item.key === "LWO-002").linearIssue, "LWO-200");
+});
+
+test("ready issues only include dependency-satisfied backlog or todo work", () => {
+  let workflow = buildWorkflow("Build a Linear-managed Codex plugin", true);
+  let issues = readyIssues(parseWorkflow(workflow));
+  assert.deepEqual(issues.map((issue) => issue.key), ["LWO-001"]);
+
+  workflow = updateWorkflowStatus(workflow, "LWO-001", "Done");
+  issues = readyIssues(parseWorkflow(workflow));
+  assert.deepEqual(issues.map((issue) => issue.key), ["LWO-002"]);
+});
+
+test("parallel wave only includes dependency-ready parallel work", () => {
+  let workflow = buildWorkflow("Build a Linear-managed Codex plugin", true);
+  workflow = updateWorkflowStatus(workflow, "LWO-001", "Done");
+  workflow = updateWorkflowStatus(workflow, "LWO-002", "Done");
+  workflow = updateWorkflowStatus(workflow, "LWO-003", "Done");
+  const wave = parallelWave(parseWorkflow(workflow));
+
+  assert.deepEqual(wave.map((issue) => issue.key), ["LWO-004"]);
+});
+
+test("branch name uses Linear identifier when present", () => {
+  assert.equal(
+    branchNameForIssue({ key: "LWO-004", linearIssue: "HOW-76", title: "Build bookmark CLI example" }),
+    "issue/how-76-build-bookmark-cli-example",
+  );
 });
 
 test("statusline selects active issue by status priority", () => {
@@ -147,7 +209,7 @@ test("sync-linear apply queries workflow states with Linear ID team variable", a
   const originalLog = console.log;
   const queries = [];
 
-  writeFileSync(workflowPath, buildWorkflow("Build a Linear-managed Codex plugin", false));
+  writeFileSync(workflowPath, executableWorkflow());
   process.env.LINEAR_API_KEY = "lin_api_test";
   process.env.LINEAR_TEAM_ID = "team-123";
   process.env.LINEAR_PROJECT_URL = "https://linear.app/acme/project/example-project-abcdef123456/issues";
@@ -219,4 +281,125 @@ test("sync-linear apply queries workflow states with Linear ID team variable", a
 
   assert.match(queries[0], /query WorkflowStates\(\$teamId: ID!\)/);
   assert.match(queries[1], /query Projects\(\$teamId: String!\)/);
+});
+
+test("start-issue marks a ready issue in progress and assigns a branch without checkout", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "lwo-start-"));
+  const workflowPath = join(tempDir, "workflow.md");
+  const originalLog = console.log;
+  const lines = [];
+
+  writeFileSync(workflowPath, executableWorkflow());
+  console.log = (line) => lines.push(line);
+
+  try {
+    await run(["select-issue", workflowPath, "LWO-001"]);
+    await run(["start-issue", workflowPath, "LWO-001", "--mode", "github"]);
+  } finally {
+    console.log = originalLog;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+
+  const result = JSON.parse(lines[1]);
+  assert.equal(result.branch, "issue/how-1-clarify-workflow-scope-and-authority");
+});
+
+test("start-issue checkout creates an issue branch before writing workflow changes", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "lwo-git-start-"));
+  const originalCwd = process.cwd();
+  const originalLog = console.log;
+  const lines = [];
+
+  try {
+    process.chdir(tempDir);
+    execFileSync("git", ["init", "-b", "main"], { stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "test@example.com"]);
+    execFileSync("git", ["config", "user.name", "Test User"]);
+    writeFileSync("workflow.md", executableWorkflow());
+    execFileSync("git", ["add", "workflow.md"]);
+    execFileSync("git", ["commit", "-m", "Initial workflow"], { stdio: "ignore" });
+    console.log = (line) => lines.push(line);
+
+    await run(["select-issue", "workflow.md", "LWO-001"]);
+    await run(["start-issue", "workflow.md", "LWO-001", "--mode", "github", "--checkout"]);
+
+    const currentBranch = execFileSync("git", ["branch", "--show-current"], { encoding: "utf8" }).trim();
+    const issue = parseWorkflow(readFileSync("workflow.md", "utf8")).find((item) => item.key === "LWO-001");
+    assert.equal(currentBranch, "issue/how-1-clarify-workflow-scope-and-authority");
+    assert.equal(issue.status, "In Progress");
+    assert.equal(issue.branch, currentBranch);
+  } finally {
+    console.log = originalLog;
+    process.chdir(originalCwd);
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("select-issue refuses execution before Linear backlog registration unless local-only", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "lwo-linear-required-"));
+  const workflowPath = join(tempDir, "workflow.md");
+  writeFileSync(
+    workflowPath,
+    updateStartupAnswers(buildWorkflow("Build a Linear-managed Codex plugin", false), {
+      workspace: "github",
+      credentials: "exported",
+      goalMode: "off",
+    }),
+  );
+
+  try {
+    await assert.rejects(() => run(["select-issue", workflowPath, "LWO-001"]), /must have a Linear issue identifier/);
+    await run(["select-issue", workflowPath, "LWO-001", "--local-only"]);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("set-status enforces review gate before merging", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "lwo-review-gate-"));
+  const workflowPath = join(tempDir, "workflow.md");
+  writeFileSync(workflowPath, executableWorkflow());
+
+  try {
+    await assert.rejects(() => run(["set-status", workflowPath, "LWO-001", "Merging"]), /invalid status transition/);
+    await run(["select-issue", workflowPath, "LWO-001"]);
+    await run(["start-issue", workflowPath, "LWO-001", "--mode", "github"]);
+    await run(["set-status", workflowPath, "LWO-001", "Review"]);
+    await assert.rejects(() => run(["set-status", workflowPath, "LWO-001", "Merging"]), /--reviewed-by is required/);
+    await run(["set-status", workflowPath, "LWO-001", "Merging", "--reviewed-by", "codex-reviewer"]);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("worktree checkout updates root workflow and mirrors into the worktree", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "lwo-worktree-start-"));
+  const worktreeDir = join(tmpdir(), `lwo-worktree-${crypto.randomUUID()}`);
+  const originalCwd = process.cwd();
+  const originalLog = console.log;
+  console.log = () => {};
+
+  try {
+    process.chdir(tempDir);
+    execFileSync("git", ["init", "-b", "main"], { stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "test@example.com"]);
+    execFileSync("git", ["config", "user.name", "Test User"]);
+    writeFileSync("workflow.md", executableWorkflow());
+    execFileSync("git", ["add", "workflow.md"]);
+    execFileSync("git", ["commit", "-m", "Initial workflow"], { stdio: "ignore" });
+
+    await run(["select-issue", "workflow.md", "LWO-001"]);
+    await run(["start-issue", "workflow.md", "LWO-001", "--mode", "worktree", "--worktree-dir", worktreeDir, "--checkout"]);
+
+    const rootIssue = parseWorkflow(readFileSync("workflow.md", "utf8")).find((item) => item.key === "LWO-001");
+    const worktreeIssue = parseWorkflow(readFileSync(join(worktreeDir, "workflow.md"), "utf8")).find((item) => item.key === "LWO-001");
+    assert.equal(rootIssue.status, "In Progress");
+    assert.equal(worktreeIssue.status, "In Progress");
+    assert.equal(rootIssue.branch, worktreeDir);
+  } finally {
+    console.log = originalLog;
+    process.chdir(originalCwd);
+    rmSync(worktreeDir, { recursive: true, force: true });
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });

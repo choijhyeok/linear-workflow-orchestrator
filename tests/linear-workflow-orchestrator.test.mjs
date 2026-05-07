@@ -43,17 +43,27 @@ function executableWorkflow(goal = "Build a Linear-managed Codex plugin") {
 }
 
 test("build and parse workflow round trip", () => {
-  const workflow = buildWorkflow("Build a Linear-managed Codex plugin", true);
+  const workflow = buildWorkflow("Build bookmark CLI with add, list, remove", true);
   const issues = parseWorkflow(workflow);
 
   assert.equal(issues.length, 5);
   assert.equal(issues[0].key, "LWO-001");
+  assert.equal(issues[0].title, "Scaffold bookmark CLI package and storage");
   assert.equal(issues[0].status, "Backlog");
   assert.equal(issues[0].branch, "");
   assert.deepEqual(issues[1].dependsOn, ["LWO-001"]);
+  assert.deepEqual(issues[4].dependsOn, ["LWO-002", "LWO-003", "LWO-004"]);
   assert.match(workflow, /Goal mode: on/);
   assert.match(workflow, /Branch\/Worktree/);
   assert.match(workflow, /agent:\n  max_concurrent_agents: 3\n  max_turns: 20/);
+});
+
+test("generic workflow issues are feature slices, not orchestration chores", () => {
+  const workflow = buildWorkflow("Add Telegram proposal confirmation", true);
+  const titles = parseWorkflow(workflow).map((issue) => issue.title).join("\n");
+
+  assert.doesNotMatch(titles, /Clarify workflow scope|Register Linear backlog|Review, rework, and merge/);
+  assert.match(titles, /Implement core behavior/);
 });
 
 test("workflow config parses agent concurrency and turn budget", () => {
@@ -118,6 +128,9 @@ test("build issue inputs include dependencies and project uuid", () => {
   assert.equal(payload.stateId, "state-456");
   assert.equal(payload.projectId, "12345678-1234-1234-1234-123456789abc");
   assert.match(payload.description, /LWO-001, LWO-002/);
+  assert.match(payload.description, /## Scope/);
+  assert.match(payload.description, /## Validation/);
+  assert.match(payload.description, /terminal TUI/);
   assert.equal(payload.title, "LWO-010: Implement worker lane");
 });
 
@@ -300,17 +313,15 @@ test("ready issues only include dependency-satisfied backlog or todo work", () =
 
   workflow = updateWorkflowStatus(workflow, "LWO-001", "Done");
   issues = readyIssues(parseWorkflow(workflow));
-  assert.deepEqual(issues.map((issue) => issue.key), ["LWO-002"]);
+  assert.deepEqual(issues.map((issue) => issue.key), ["LWO-002", "LWO-003"]);
 });
 
 test("parallel wave only includes dependency-ready parallel work", () => {
-  let workflow = buildWorkflow("Build a Linear-managed Codex plugin", true);
+  let workflow = buildWorkflow("Build bookmark CLI with add, list, remove", true);
   workflow = updateWorkflowStatus(workflow, "LWO-001", "Done");
-  workflow = updateWorkflowStatus(workflow, "LWO-002", "Done");
-  workflow = updateWorkflowStatus(workflow, "LWO-003", "Done");
   const wave = parallelWave(parseWorkflow(workflow));
 
-  assert.deepEqual(wave.map((issue) => issue.key), ["LWO-004"]);
+  assert.deepEqual(wave.map((issue) => issue.key), ["LWO-002", "LWO-003", "LWO-004"]);
 });
 
 test("parallel wave respects max concurrent agent capacity", () => {
@@ -340,7 +351,7 @@ test("statusline selects active issue by status priority", () => {
   );
   const line = formatStatusLine(currentIssue(parseWorkflow(workflow)));
 
-  assert.equal(line, "Linear In Progress: LWO-004 Execute independent implementation lanes · ABC-123");
+  assert.equal(line, "Linear In Progress: LWO-004 Review and prepare merge for Build a Linear-managed Codex plugin · ABC-123");
 });
 
 test("statusline can hyperlink Linear issue identifiers", () => {
@@ -370,7 +381,10 @@ test("workpad body records issue acceptance and progress", () => {
   }, { branch: "issue/how-76-bookmarks", now: "2026-05-07T00:00:00.000Z" });
 
   assert.match(body, /## Codex Workpad/);
+  assert.match(body, /### Environment/);
   assert.match(body, /Bookmark commands are tested/);
+  assert.match(body, /### Validation/);
+  assert.match(body, /### Review \/ Merge/);
   assert.match(body, /issue\/how-76-bookmarks/);
 });
 
@@ -854,7 +868,7 @@ test("start-issue marks a ready issue in progress and assigns a branch without c
   }
 
   const result = JSON.parse(lines[1]);
-  assert.equal(result.branch, "issue/how-1-clarify-workflow-scope-and-authority");
+  assert.equal(result.branch, "issue/how-1-define-implementation-contract-for-build-a-linea");
 });
 
 test("start-issue apply-linear creates a Linear workpad comment", async () => {
@@ -944,7 +958,7 @@ test("start-issue checkout creates an issue branch before writing workflow chang
 
     const currentBranch = execFileSync("git", ["branch", "--show-current"], { encoding: "utf8" }).trim();
     const issue = parseWorkflow(readFileSync("workflow.md", "utf8")).find((item) => item.key === "LWO-001");
-    assert.equal(currentBranch, "issue/how-1-clarify-workflow-scope-and-authority");
+    assert.equal(currentBranch, "issue/how-1-define-implementation-contract-for-build-a-linea");
     assert.equal(issue.status, "In Progress");
     assert.equal(issue.branch, currentBranch);
   } finally {

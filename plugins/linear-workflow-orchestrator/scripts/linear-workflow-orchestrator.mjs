@@ -52,6 +52,104 @@ function formatIssueRow(issue) {
   return `| ${issue.key} | ${issue.title} | ${issue.lane} | ${deps} | ${issue.status} | ${linearIssue} | ${branch} | ${issue.acceptance} |`;
 }
 
+function sentenceList(values) {
+  return values.filter(Boolean).join("; ");
+}
+
+function inferredFeatureIssues(goal) {
+  const normalized = goal.toLowerCase();
+  if (/(bookmark|북마크)/.test(normalized)) {
+    return [
+      {
+        key: "LWO-001",
+        title: "Scaffold bookmark CLI package and storage",
+        lane: "serial",
+        dependsOn: [],
+        acceptance: sentenceList([
+          "package metadata and executable CLI entrypoint exist",
+          "bookmark data is persisted in a JSON store under a user-writable path",
+          "test isolation can override the data path",
+        ]),
+      },
+      {
+        key: "LWO-002",
+        title: "Implement add command",
+        lane: "parallel",
+        dependsOn: ["LWO-001"],
+        acceptance: sentenceList([
+          "`add` stores a bookmark with title and URL",
+          "invalid or duplicate input returns a clear non-zero failure",
+          "command behavior is covered by tests",
+        ]),
+      },
+      {
+        key: "LWO-003",
+        title: "Implement list command",
+        lane: "parallel",
+        dependsOn: ["LWO-001"],
+        acceptance: sentenceList([
+          "`list` prints stored bookmarks in deterministic order",
+          "empty state is handled cleanly",
+          "output is covered by tests",
+        ]),
+      },
+      {
+        key: "LWO-004",
+        title: "Implement remove command",
+        lane: "parallel",
+        dependsOn: ["LWO-001"],
+        acceptance: sentenceList([
+          "`remove` deletes a bookmark by stable identifier or URL",
+          "missing targets return a clear non-zero failure",
+          "remove behavior is covered by tests",
+        ]),
+      },
+      {
+        key: "LWO-005",
+        title: "Document and validate bookmark CLI",
+        lane: "serial",
+        dependsOn: ["LWO-002", "LWO-003", "LWO-004"],
+        acceptance: sentenceList([
+          "README shows add/list/remove usage",
+          "automated tests pass",
+          "manual smoke evidence is recorded",
+        ]),
+      },
+    ];
+  }
+
+  return [
+    {
+      key: "LWO-001",
+      title: `Define implementation contract for ${slugTitle(goal)}`,
+      lane: "serial",
+      dependsOn: [],
+      acceptance: "scope, data flow, user-visible behavior, and validation plan are explicit before implementation starts",
+    },
+    {
+      key: "LWO-002",
+      title: `Implement core behavior for ${slugTitle(goal)}`,
+      lane: "serial",
+      dependsOn: ["LWO-001"],
+      acceptance: "the requested user-facing behavior works end to end in the issue branch or worktree",
+    },
+    {
+      key: "LWO-003",
+      title: `Add validation coverage for ${slugTitle(goal)}`,
+      lane: "parallel",
+      dependsOn: ["LWO-001"],
+      acceptance: "targeted automated tests or smoke checks cover the main success and failure paths",
+    },
+    {
+      key: "LWO-004",
+      title: `Review and prepare merge for ${slugTitle(goal)}`,
+      lane: "serial",
+      dependsOn: ["LWO-002", "LWO-003"],
+      acceptance: "review findings are resolved, merge artifact is linked, and remaining risks are documented",
+    },
+  ];
+}
+
 export function buildWorkflow(goal, goalMode, extraStatuses = [], options = {}) {
   const maxConcurrentAgents = Number(options.maxConcurrentAgents ?? 3);
   const maxTurns = Number(options.maxTurns ?? 20);
@@ -70,58 +168,12 @@ export function buildWorkflow(goal, goalMode, extraStatuses = [], options = {}) 
     ...DEFAULT_STATUSES,
     ...extraStatuses.map((status) => [status, "User-defined status."]),
   ];
-  const issues = [
-    {
-      key: "LWO-001",
-      title: "Clarify workflow scope and authority",
-      lane: "serial",
-      dependsOn: [],
-      status: "Backlog",
-      acceptance: "Goal, goal mode, GitHub authority, and Linear authority are explicit.",
-      linearIssue: "",
-      branch: "",
-    },
-    {
-      key: "LWO-002",
-      title: "Create implementation workflow",
-      lane: "serial",
-      dependsOn: ["LWO-001"],
-      status: "Backlog",
-      acceptance: "workflow.md describes tasks, dependencies, statuses, and acceptance criteria.",
-      linearIssue: "",
-      branch: "",
-    },
-    {
-      key: "LWO-003",
-      title: "Register Linear backlog",
-      lane: "serial",
-      dependsOn: ["LWO-002"],
-      status: "Backlog",
-      acceptance: "Linear issues are created or a dry-run payload is available for review.",
-      linearIssue: "",
-      branch: "",
-    },
-    {
-      key: "LWO-004",
-      title: "Execute independent implementation lanes",
-      lane: "parallel",
-      dependsOn: ["LWO-003"],
-      status: "Backlog",
-      acceptance: "Parallel-ready tasks are implemented without violating dependencies.",
-      linearIssue: "",
-      branch: "",
-    },
-    {
-      key: "LWO-005",
-      title: "Review, rework, and merge",
-      lane: "serial",
-      dependsOn: ["LWO-004"],
-      status: "Backlog",
-      acceptance: "Review findings are resolved and merge readiness is verified.",
-      linearIssue: "",
-      branch: "",
-    },
-  ];
+  const issues = inferredFeatureIssues(goal).map((issue) => ({
+    ...issue,
+    status: "Backlog",
+    linearIssue: "",
+    branch: "",
+  }));
 
   return [
     "---",
@@ -615,25 +667,48 @@ export function authorizationHeader(secret) {
 
 export function linearDescription(issue, workflowPath) {
   const deps = issue.dependsOn.length ? issue.dependsOn.join(", ") : "None";
+  const acceptanceItems = issue.acceptance.split(";").map((item) => item.trim()).filter(Boolean);
   return [
-    `Generated by Linear Workflow Orchestrator from \`${workflowPath}\`.`,
+    `Generated by Linear Workflow Orchestrator from \`${workflowPath}\`. This issue is intended to be executed by the terminal TUI runner, not manually mirrored from Codex status prompts.`,
+    "",
+    "## Context",
+    "",
+    `This slice implements **${issue.title}** as part of the workflow plan. It should be worked in its own issue branch/worktree and recorded in the Codex Workpad below.`,
+    "",
+    "## Scope",
     "",
     `- Workflow ID: \`${issue.key}\``,
     `- Lane: \`${issue.lane}\``,
-    `- Depends on: ${deps}`,
-    `- Initial orchestrator status: \`${issue.status}\``,
+    `- Dependencies: ${deps}`,
+    `- Initial queue status: \`${issue.status}\``,
+    "- The terminal TUI should claim this issue only when dependencies are satisfied.",
+    "- The implementation lane owns only this issue's branch/worktree and workpad.",
     "",
     "## Acceptance Criteria",
     "",
-    issue.acceptance,
+    ...acceptanceItems.map((item) => `- [ ] ${item}`),
+    "",
+    "## Validation",
+    "",
+    "- [ ] Automated tests or targeted smoke checks prove the acceptance criteria.",
+    "- [ ] Evidence is recorded in the Codex Workpad before Review/Merging.",
+    "- [ ] Review outcome and merge/PR link are recorded before Done.",
+    "",
+    "## Runner Notes",
+    "",
+    "- Queue ownership: terminal TUI / poller.",
+    "- Routine progress should not be driven by repeated Codex-side `set-status --apply-linear` prompts.",
   ].join("\n");
 }
 
 export function initialWorkpadBody(issue, options = {}) {
   const now = options.now ?? new Date().toISOString();
   const branch = options.branch ? `\n- Branch/Worktree: \`${options.branch}\`` : "";
+  const acceptanceItems = String(issue.acceptance ?? "").split(";").map((item) => item.trim()).filter(Boolean);
   return [
     WORKPAD_HEADER,
+    "",
+    "### Environment",
     "",
     `- Workflow ID: \`${issue.key}\``,
     `- Status: \`${issue.status}\`${branch}`,
@@ -641,14 +716,27 @@ export function initialWorkpadBody(issue, options = {}) {
     "",
     "### Acceptance Criteria",
     "",
-    `- [ ] ${issue.acceptance}`,
+    ...(acceptanceItems.length ? acceptanceItems.map((item) => `- [ ] ${item}`) : [`- [ ] ${issue.acceptance}`]),
     "",
     "### Plan",
     "",
-    "- [ ] Reproduce or confirm the requested behavior.",
-    "- [ ] Implement the scoped change in the issue branch/worktree.",
+    "- [ ] Confirm dependencies are satisfied before starting.",
+    "- [ ] Inspect the relevant code paths and record the implementation approach.",
+    "- [ ] Implement only this issue's scoped change in the issue branch/worktree.",
     "- [ ] Run validation and record evidence here.",
     "- [ ] Link PR or merge artifact before handoff.",
+    "",
+    "### Validation",
+    "",
+    "- [ ] Automated test or smoke command run recorded.",
+    "- [ ] User-visible behavior evidence recorded when applicable.",
+    "- [ ] Review/rework outcome recorded before merge.",
+    "",
+    "### Review / Merge",
+    "",
+    "- Reviewer: pending",
+    "- Review outcome: pending",
+    "- Merge/PR artifact: pending",
     "",
     "### Progress Log",
     "",

@@ -89,7 +89,17 @@ For a larger Symphony-style terminal TUI in a new terminal, side pane, or termin
 ~/.codex/bin/linear-workflow-orchestrator-tui
 ```
 
-This opens the refreshing dashboard and Linear poller loop for `WORKFLOW.md`. Use `~/.codex/bin/linear-workflow-orchestrator-dashboard --watch` when you only want the auto-refreshing dashboard without polling, or `~/.codex/bin/linear-workflow-orchestrator-run` as the older alias for the same combined operator loop.
+This wrapper first looks for `plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator-tui.mjs`. When that companion TUI script exists, the installed command delegates to it directly; otherwise it falls back to `node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs tui WORKFLOW.md`. Use `~/.codex/bin/linear-workflow-orchestrator-dashboard --watch` when you only want the auto-refreshing dashboard without polling, or `~/.codex/bin/linear-workflow-orchestrator-run` as the older alias for the same combined operator loop.
+
+For an Elixir-like terminal TUI workflow:
+
+```bash
+~/.codex/bin/linear-workflow-orchestrator-tui WORKFLOW.md
+~/.codex/bin/linear-workflow-orchestrator-tui --debug
+~/.codex/bin/linear-workflow-orchestrator-tui --foreground-agent --stream-agent-output
+```
+
+The installed wrapper uses `WORKFLOW.md` by default when no workflow path is provided, including flag-only invocations such as `--debug`. `--debug` adds compact poll diagnostics to the TUI summary so you can inspect poll ticks and lane starts without flooding the full-screen redraw. `--foreground-agent --stream-agent-output` swaps the default quiet background lane execution for raw agent stdout/stderr in the same terminal, which is useful for troubleshooting but will interrupt the clean full-screen redraw. Regardless of mode, lane output is persisted under each issue workspace's `.lwo/agent-logs/` directory so the operator can review full raw logs after the screen refresh has moved on.
 
 When `goal --open-tui` or `open-tui` launches a new terminal, exported environment variables from the current shell may not be inherited by macOS Terminal. The helper writes only the required Linear variables to a private `0600` env file under `~/.codex/linear-workflow-orchestrator/env/` and passes that file path to the TUI; secret values are not printed in the launch command.
 
@@ -122,6 +132,7 @@ Install from GitHub for Codex testing:
 
 ```bash
 codex plugin marketplace add https://github.com/choijhyeok/linear-workflow-orchestrator
+npm install
 npm run install:local
 ```
 
@@ -129,10 +140,11 @@ Install from a local checkout:
 
 ```bash
 codex plugin marketplace add /Users/jaehyeokchoi/Desktop/linear-workflow-orchestrator
+npm install
 npm run install:local
 ```
 
-`install:local` also installs `~/.codex/bin/linear-workflow-orchestrator-statusline` and `~/.codex/bin/linear-workflow-orchestrator-dashboard`, then registers plugin metadata in Codex config. When the host supports command-backed status lines or HUD panels, active Linear workflow issues can be rendered from the current `workflow.md`; otherwise use the dashboard wrapper in a side pane.
+`install:local` also installs `~/.codex/bin/linear-workflow-orchestrator-statusline`, `~/.codex/bin/linear-workflow-orchestrator-dashboard`, `~/.codex/bin/linear-workflow-orchestrator-run`, `~/.codex/bin/linear-workflow-orchestrator-tui`, and `~/.codex/bin/linear-workflow-orchestrator-open-tui`, then registers plugin metadata in Codex config. The installed TUI wrapper prefers the optional companion TUI script when present and otherwise falls back to the helper's built-in `tui` command. When the host supports command-backed status lines or HUD panels, active Linear workflow issues can be rendered from the current `workflow.md`; otherwise use the dashboard wrapper in a side pane or the TUI wrapper in a separate terminal.
 
 ## Dogfood Example
 

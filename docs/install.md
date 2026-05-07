@@ -13,6 +13,7 @@ codex plugin marketplace add https://github.com/choijhyeok/linear-workflow-orche
 Then install the plugin metadata and expose the skill directory to Codex exec sessions:
 
 ```bash
+npm install
 npm run install:local
 ```
 
@@ -46,6 +47,7 @@ Then install the local plugin metadata and expose the skill directory to Codex e
 This also installs the skill into `~/.codex/skills/linear-workflow-orchestrator/SKILL.md` with absolute helper paths so it works from any project directory.
 
 ```bash
+npm install
 npm run install:local
 ```
 
@@ -66,7 +68,7 @@ Current Codex TUI builds do not execute arbitrary plugin HUD commands below the 
 
 ## Runtime
 
-The plugin uses Node.js standard library only. There is no Python package, no npm dependency install, and no build step.
+The plugin runtime is Node.js. Run `npm install` once in a fresh checkout so the companion terminal TUI dependency is available; there is no Python package and no build step.
 
 ## Execution Model
 

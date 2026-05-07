@@ -1467,13 +1467,16 @@ function appleScriptQuote(value) {
 
 export function buildTuiLaunchCommand(workflow, options = {}) {
   const helper = options.helperPath ?? path.resolve(new URL(import.meta.url).pathname);
-  const args = ["tui", path.resolve(workflow)];
+  const companion = options.tuiPath ?? path.join(path.dirname(helper), "linear-workflow-orchestrator-tui.mjs");
+  const useCompanion = fs.existsSync(companion);
+  const executable = useCompanion ? companion : helper;
+  const args = useCompanion ? [path.resolve(workflow)] : ["tui", path.resolve(workflow)];
   if (options["env-file"]) args.push("--env-file", path.resolve(options["env-file"]));
   if (options["interval-ms"]) args.push("--interval-ms", String(options["interval-ms"]));
   if (options["fetch-limit"]) args.push("--fetch-limit", String(options["fetch-limit"]));
   return [
     `cd ${shellQuote(process.cwd())}`,
-    ["node", shellQuote(helper), ...args.map(shellQuote)].join(" "),
+    ["node", shellQuote(executable), ...args.map(shellQuote)].join(" "),
   ].join(" && ");
 }
 

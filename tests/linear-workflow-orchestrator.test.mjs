@@ -304,7 +304,7 @@ test("runtime env files persist Linear values without printing secrets in launch
     assert.match(content, /LINEAR_TEAM_ID="team-123"/);
 
     const command = buildTuiLaunchCommand("WORKFLOW.md", { "env-file": envPath });
-    assert.match(command, /linear-workflow-orchestrator\.mjs/);
+    assert.match(command, /linear-workflow-orchestrator-tui\.mjs/);
     assert.match(command, /--env-file/);
     assert.doesNotMatch(command, /lin_api_secret/);
   } finally {
@@ -524,6 +524,21 @@ test("dashboard renders compact agent events instead of full command output", ()
   assert.match(dashboard, /HOW-1\s+In Progress\s+1234/);
   assert.match(dashboard, /completed: npm test passed/);
   assert.doesNotMatch(dashboard, /OpenAI Codex v/);
+});
+
+test("companion TUI script is syntax valid and installer prefers it", () => {
+  execFileSync("node", ["--check", "plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator-tui.mjs"]);
+  const help = execFileSync("node", [
+    "plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator-tui.mjs",
+    "--help",
+  ], { encoding: "utf8" });
+  assert.match(help, /--debug/);
+
+  const installer = readFileSync(join(import.meta.dirname, "../scripts/install-local.mjs"), "utf8");
+  assert.match(installer, /linear-workflow-orchestrator-tui\.mjs/);
+  assert.match(installer, /\$#\" -eq 0 \] \|\| \[ "\$\{1#-\}" != "\$1" \]/);
+  assert.match(installer, /set -- WORKFLOW\.md "\$@"/);
+  assert.match(installer, /exec node "\$\{tuiCompanionPath/);
 });
 
 test("dashboard watch can render a single snapshot", async () => {

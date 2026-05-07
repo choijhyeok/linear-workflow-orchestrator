@@ -16,6 +16,7 @@ const runWrapperPath = path.join(installedBinRoot, "linear-workflow-orchestrator
 const tuiWrapperPath = path.join(installedBinRoot, "linear-workflow-orchestrator-tui");
 const openTuiWrapperPath = path.join(installedBinRoot, "linear-workflow-orchestrator-open-tui");
 const helperPath = path.join(pluginRoot, "scripts", "linear-workflow-orchestrator.mjs");
+const tuiCompanionPath = path.join(pluginRoot, "scripts", "linear-workflow-orchestrator-tui.mjs");
 const configPath = path.join(os.homedir(), ".codex", "config.json");
 const tomlPath = path.join(os.homedir(), ".codex", "config.toml");
 
@@ -122,7 +123,7 @@ const runWrapper = [
   "#!/bin/sh",
   "set -eu",
   'if [ "$#" -eq 0 ]; then',
-  "  set -- WORKFLOW.md",
+  '  set -- WORKFLOW.md "$@"',
   "fi",
   `exec node "${helperPath.replace(/"/g, '\\"')}" run "$@"`,
   "",
@@ -132,8 +133,11 @@ fs.chmodSync(runWrapperPath, 0o755);
 const tuiWrapper = [
   "#!/bin/sh",
   "set -eu",
-  'if [ "$#" -eq 0 ]; then',
-  "  set -- WORKFLOW.md",
+  'if [ "$#" -eq 0 ] || [ "${1#-}" != "$1" ]; then',
+  '  set -- WORKFLOW.md "$@"',
+  "fi",
+  `if [ -f "${tuiCompanionPath.replace(/"/g, '\\"')}" ]; then`,
+  `  exec node "${tuiCompanionPath.replace(/"/g, '\\"')}" "$@"`,
   "fi",
   `exec node "${helperPath.replace(/"/g, '\\"')}" tui "$@"`,
   "",
@@ -235,6 +239,7 @@ console.log(`Installed statusline command: ${statuslineWrapperPath}`);
 console.log(`Installed dashboard command: ${dashboardWrapperPath}`);
 console.log(`Installed runner command: ${runWrapperPath}`);
 console.log(`Installed TUI command: ${tuiWrapperPath}`);
+console.log(`Optional TUI companion path: ${tuiCompanionPath}`);
 console.log(`Installed open TUI command: ${openTuiWrapperPath}`);
 console.log(`Wrote ${configPath}`);
 console.log(`Updated ${tomlPath}`);

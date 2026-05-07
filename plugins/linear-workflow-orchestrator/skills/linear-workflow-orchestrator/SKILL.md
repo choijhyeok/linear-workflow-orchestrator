@@ -105,6 +105,8 @@ This command creates `WORKFLOW.md`, records startup answers, resolves or creates
 ~/.codex/bin/linear-workflow-orchestrator-tui
 ```
 
+The installed `linear-workflow-orchestrator-tui` wrapper prefers `plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator-tui.mjs` when that companion script exists; otherwise it falls back to `node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs tui WORKFLOW.md`.
+
 Do not replace the TUI with repeated Codex-side `set-status ... --apply-linear` calls. In goal mode those calls are only for explicit review/merge interventions, not routine progress.
 
 1. Restate the development goal and authority assumptions.
@@ -261,6 +263,22 @@ Linear In Progress: LWO-004 Execute independent implementation lanes · ABC-123
 The command reads `workflow.md` and chooses the most active issue in this priority order: In Progress, Rework, Review, Merging, Todo, Backlog. Plugin installation exposes this command, while actual native TUI status-line registration remains owned by the host Codex/OMX setup. Current Codex TUI builds do not run arbitrary plugin dashboard commands below the composer, so use the installed dashboard wrapper with `--watch`, or the installed runner wrapper, in a terminal split or OMX HUD pane until the host exposes command-backed HUD panels.
 
 Use `--hyperlink` with `--linear-base-url` or `LINEAR_PROJECT_URL` when the host status line preserves OSC 8 terminal hyperlinks. This lets the visible Linear issue identifier open the corresponding Linear issue page.
+
+For an Elixir-like terminal operator screen, prefer the installed TUI wrapper:
+
+```bash
+~/.codex/bin/linear-workflow-orchestrator-tui WORKFLOW.md
+~/.codex/bin/linear-workflow-orchestrator-tui
+~/.codex/bin/linear-workflow-orchestrator-tui --debug
+~/.codex/bin/linear-workflow-orchestrator-tui --foreground-agent --stream-agent-output
+```
+
+Behavior notes:
+
+- Default TUI mode redraws the dashboard/poller screen and keeps lane stdout/stderr out of the main screen while still logging each lane under `.lwo/agent-logs/` inside the issue workspace.
+- The installed wrapper defaults to `WORKFLOW.md` when no workflow path is provided, including flag-only invocations such as `--debug`.
+- `--debug` adds compact poll diagnostics to the TUI summary so the operator can inspect queue decisions and failures without flooding the full-screen redraw.
+- `--foreground-agent --stream-agent-output` turns the TUI into a raw-output troubleshooting mode. Lane stdout/stderr is streamed into the same terminal, so the clean dashboard redraw is no longer the priority.
 
 ## Linear API Notes
 

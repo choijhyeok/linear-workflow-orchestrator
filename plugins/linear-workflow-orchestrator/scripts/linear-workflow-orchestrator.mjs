@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import net from "node:net";
 import { execFileSync, spawn } from "node:child_process";
 
 export const DEFAULT_STATUSES = [
@@ -156,7 +157,7 @@ export function buildWorkflow(goal, goalMode, extraStatuses = [], options = {}) 
   const workspaceRoot = options.workspaceRoot ?? "~/code/workspaces";
   const repoUrl = options.repoUrl ?? "";
   const baseBranch = options.baseBranch ?? "main";
-  const codexCommand = options.codexCommand ?? "codex exec --dangerously-bypass-approvals-and-sandbox \"$SYMPHONY_ISSUE_PROMPT\"";
+  const codexCommand = options.codexCommand ?? "codex app-server";
   const afterCreate = repoUrl
     ? [
       "    git clone \"$SYMPHONY_REPO_URL\" .",
@@ -252,7 +253,7 @@ export function parseWorkflowConfig(markdown) {
     hooks: {},
     agent: { max_concurrent_agents: 3, max_turns: 20, max_retry_backoff_ms: 300000 },
     github: { repo_url: "", base_branch: "main" },
-    codex: { command: "codex exec --dangerously-bypass-approvals-and-sandbox \"$SYMPHONY_ISSUE_PROMPT\"" },
+    codex: { command: "codex app-server" },
   };
   if (!markdown.startsWith("---\n")) return config;
   const end = markdown.indexOf("\n---", 4);
@@ -1069,6 +1070,8 @@ export function issueScopedPrompt(workflowMarkdown, issue, attempt = null) {
     "- If the repository contains WORKFLOW.md or other generated orchestration files, treat them as context only; they are not permission to complete the whole workflow.",
     "- Keep changes inside this issue branch/workspace.",
     "- Run the smallest meaningful validation for this issue and report evidence in the final response.",
+    "- Do not run Linear status mutation commands such as `set-status --apply-linear` from inside this lane.",
+    "- Do not ask the user whether to move this issue to Done; the terminal TUI/poller owns Linear state transitions after review/merge evidence exists.",
     retryNote.trimEnd(),
     "Linear issue description:",
     description || "(No description provided.)",
@@ -1153,8 +1156,218 @@ function readRunEventsForWorkflow(workflowPath) {
     .filter(Boolean);
 }
 
+export function appServerStatePath(workflowDir) {
+  return path.join(workflowDir, ".lwo", "app-server.json");
+}
+
+export function isCodexAppServerCommand(command) {
+  return String(command ?? "").trim().split(/\s+/).slice(0, 2).join(" ") === "codex app-server";
+}
+
+function hasListenArg(command) {
+  return /(^|\s)--listen(\s|=|$)/.test(String(command ?? ""));
+}
+
+function freeTcpPort(host = "127.0.0.1") {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.on("error", reject);
+    server.listen(0, host, () => {
+      const address = server.address();
+      server.close(() => resolve(address.port));
+    });
+  });
+}
+
+function waitForTcpPort(port, host = "127.0.0.1", timeoutMs = 8000) {
+  const started = Date.now();
+  return new Promise((resolve, reject) => {
+    const tryConnect = () => {
+      const socket = net.connect({ port, host });
+      socket.once("connect", () => {
+        socket.destroy();
+        resolve(true);
+      });
+      socket.once("error", () => {
+        socket.destroy();
+        if (Date.now() - started > timeoutMs) {
+          reject(new Error(`codex app-server did not start on ${host}:${port}`));
+          return;
+        }
+        setTimeout(tryConnect, 100);
+      });
+    };
+    tryConnect();
+  });
+}
+
+async function ensureCodexAppServer(command, workflowDir, env = {}) {
+  const existing = readJsonFile(appServerStatePath(workflowDir));
+  if (existing?.pid && isPidRunning(existing.pid) && existing.wsUrl) return existing;
+
+  const port = await freeTcpPort();
+  const wsUrl = `ws://127.0.0.1:${port}`;
+  const logDir = path.join(workflowDir, ".lwo", "app-server");
+  fs.mkdirSync(logDir, { recursive: true });
+  const logPath = path.join(logDir, `${Date.now()}.log`);
+  const log = fs.openSync(logPath, "a");
+  const launch = hasListenArg(command) ? command : `${command} --listen ${shellQuote(wsUrl)}`;
+  const child = spawn("sh", ["-lc", launch], {
+    cwd: workflowDir,
+    detached: true,
+    stdio: ["ignore", log, log],
+    env,
+  });
+  child.unref();
+  const state = {
+    status: "running",
+    backend: "codex-app-server",
+    command: launch,
+    pid: child.pid,
+    wsUrl,
+    logPath,
+    startedAt: new Date().toISOString(),
+  };
+  fs.mkdirSync(path.dirname(appServerStatePath(workflowDir)), { recursive: true });
+  fs.writeFileSync(appServerStatePath(workflowDir), `${JSON.stringify(state, null, 2)}\n`);
+  await waitForTcpPort(port);
+  return state;
+}
+
+async function openAppServerWebSocket(wsUrl) {
+  if (typeof WebSocket !== "function") {
+    throw new Error("Node.js WebSocket support is required for codex app-server runner mode.");
+  }
+  const socket = new WebSocket(wsUrl);
+  await new Promise((resolve, reject) => {
+    socket.addEventListener("open", resolve, { once: true });
+    socket.addEventListener("error", () => reject(new Error(`failed to connect to ${wsUrl}`)), { once: true });
+  });
+  return socket;
+}
+
+function appServerRequest(socket, method, params, state) {
+  const id = state.nextId++;
+  const payload = { id, method, params };
+  socket.send(JSON.stringify(payload));
+  return new Promise((resolve, reject) => {
+    state.pending.set(id, { resolve, reject });
+  });
+}
+
+function handleAppServerMessage(message, state, log) {
+  log.write(`${message}\n`);
+  const parsed = JSON.parse(message);
+  if (parsed.id && state.pending.has(parsed.id)) {
+    const pending = state.pending.get(parsed.id);
+    state.pending.delete(parsed.id);
+    if (parsed.error) pending.reject(new Error(parsed.error.message ?? JSON.stringify(parsed.error)));
+    else pending.resolve(parsed.result);
+    return;
+  }
+  if (parsed.method === "turn/completed" && parsed.params?.turn) {
+    state.completedTurn = parsed.params.turn;
+  }
+}
+
+async function runAppServerTurn(command, cwd, prompt, env, options = {}) {
+  const workflowDir = options.workflowDir ?? cwd;
+  const server = await ensureCodexAppServer(command, workflowDir, env);
+  const logDir = options.logDir ?? path.join(cwd, ".lwo", "agent-logs");
+  fs.mkdirSync(logDir, { recursive: true });
+  const logPath = path.join(logDir, `${slugifyBranchPart(options.issueIdentifier ?? "agent")}-${Date.now()}.app-server.log`);
+  const log = fs.createWriteStream(logPath, { flags: "a" });
+  const socket = await openAppServerWebSocket(server.wsUrl);
+  const state = { nextId: 1, pending: new Map(), completedTurn: null };
+  socket.addEventListener("message", (event) => handleAppServerMessage(String(event.data), state, log));
+
+  const started = {
+    status: "running",
+    backend: "codex-app-server",
+    command,
+    appServerPid: server.pid,
+    wsUrl: server.wsUrl,
+    logPath,
+    event: "app-server turn running",
+    startedAt: new Date().toISOString(),
+  };
+  if (options.workflowDir && options.issueIdentifier) writeRunState(options.workflowDir, options.issueIdentifier, started);
+
+  const run = (async () => {
+    try {
+      await appServerRequest(socket, "initialize", {
+        clientInfo: { name: "linear-workflow-orchestrator", version: "0.1.0" },
+        capabilities: { experimentalApi: true },
+      }, state);
+      const thread = await appServerRequest(socket, "thread/start", {
+        approvalPolicy: "never",
+        cwd,
+        ephemeral: true,
+        sandbox: "danger-full-access",
+        sessionStartSource: "startup",
+      }, state);
+      const threadId = thread.thread.id;
+      await appServerRequest(socket, "turn/start", {
+        approvalPolicy: "never",
+        cwd,
+        input: [{ type: "text", text: prompt }],
+        sandboxPolicy: { type: "dangerFullAccess" },
+        threadId,
+      }, state);
+      const completed = await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("codex app-server turn timed out")), Number(options.timeoutMs ?? 0) || 0x7fffffff);
+        const tick = () => {
+          if (state.completedTurn) {
+            clearTimeout(timeout);
+            resolve(state.completedTurn);
+            return;
+          }
+          setTimeout(tick, 250);
+        };
+        tick();
+      });
+      const result = {
+        ok: completed.status === "completed",
+        status: completed.status === "completed" ? "completed" : "failed",
+        backend: "codex-app-server",
+        command,
+        appServerPid: server.pid,
+        threadId,
+        turnId: completed.id,
+        logPath,
+        event: `app-server turn ${completed.status}`,
+      };
+      if (options.workflowDir && options.issueIdentifier) writeRunState(options.workflowDir, options.issueIdentifier, result);
+      if (result.ok) return result;
+      throw Object.assign(new Error(`codex app-server turn ended with ${completed.status}`), { agent: result });
+    } finally {
+      socket.close();
+      log.end();
+    }
+  })();
+
+  if (options.backgroundAgent) {
+    run.catch((error) => {
+      const failed = error.agent ?? {
+        status: "failed",
+        backend: "codex-app-server",
+        command,
+        appServerPid: server.pid,
+        logPath,
+        event: error.message,
+      };
+      if (options.workflowDir && options.issueIdentifier) writeRunState(options.workflowDir, options.issueIdentifier, failed);
+    });
+    return started;
+  }
+  return await run;
+}
+
 async function runAgentCommand(command, cwd, prompt, env, options = {}) {
   if (options.dryRunAgent) return { skipped: true, command };
+  if (isCodexAppServerCommand(command)) {
+    return await runAppServerTurn(command, cwd, prompt, env, options);
+  }
   return await new Promise((resolve, reject) => {
     const logDir = options.logDir ?? path.join(cwd, ".lwo", "agent-logs");
     fs.mkdirSync(logDir, { recursive: true });

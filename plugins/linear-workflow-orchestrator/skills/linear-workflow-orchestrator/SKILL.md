@@ -198,7 +198,7 @@ node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.m
    - dispatch up to `agent.max_concurrent_agents` lanes concurrently
    - assign each ready parallel issue to a separate Codex session/subagent/worktree, but never exceed `agent.max_concurrent_agents`
    - pass `agent.max_turns` to the lane command through `SYMPHONY_MAX_TURNS` and `LWO_MAX_TURNS`; if the lane reaches it before completion, update the workpad with a blocker/handoff rather than silently continuing
-   - set `codex.command: codex app-server` when the user wants the lane runner to be `codex app-server`
+   - keep the generated default `codex.command: codex app-server` unless the user explicitly wants the older standalone `codex exec ...` runner
    - each Codex lane owns exactly one Linear issue and its branch/worktree
    - each lane updates only its own Linear `## Codex Workpad`
    - no lane may edit another lane's owned files unless the orchestrator updates the workflow

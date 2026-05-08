@@ -13,6 +13,7 @@ import {
   formatDashboard,
   formatStatusLine,
   initialWorkpadBody,
+  isCodexAppServerCommand,
   issueScopedPrompt,
   linearIssueUrl,
   loadEnvFile,
@@ -86,13 +87,19 @@ test("workflow config parses agent concurrency and turn budget", () => {
   assert.equal(config.github.base_branch, "main");
   assert.match(config.hooks.after_create, /SYMPHONY_ISSUE_BRANCH/);
   assert.equal(config.codex.command, "codex app-server");
+  assert.equal(isCodexAppServerCommand(config.codex.command), true);
+  assert.equal(isCodexAppServerCommand("codex exec test"), false);
 });
 
-test("workflow config preserves shell quotes inside unquoted command scalars", () => {
+test("workflow config defaults to app-server and preserves explicit shell commands", () => {
   const config = parseWorkflowConfig(buildWorkflow("Build a Linear-managed Codex plugin", true));
+  const explicit = parseWorkflowConfig(buildWorkflow("Build a Linear-managed Codex plugin", true, [], {
+    codexCommand: 'codex exec --dangerously-bypass-approvals-and-sandbox "$SYMPHONY_ISSUE_PROMPT"',
+  }));
 
+  assert.equal(config.codex.command, "codex app-server");
   assert.equal(
-    config.codex.command,
+    explicit.codex.command,
     'codex exec --dangerously-bypass-approvals-and-sandbox "$SYMPHONY_ISSUE_PROMPT"',
   );
 });
@@ -107,6 +114,8 @@ test("issue scoped prompts do not hand the whole workflow to lane agents", () =>
 
   assert.match(prompt, /exactly one Linear issue: HOW-103/);
   assert.match(prompt, /Do not implement sibling Linear issues/);
+  assert.match(prompt, /Do not run Linear status mutation commands/);
+  assert.match(prompt, /Do not ask the user whether to move this issue to Done/);
   assert.match(prompt, /package metadata and executable CLI entrypoint/);
   assert.doesNotMatch(prompt, /Implement add command/);
   assert.doesNotMatch(prompt, /Implement list command/);

@@ -98,11 +98,11 @@ codex:
 
 The helper owns this front matter. Do not manually recreate it; pass `--repo-url`, `--workspace-root`, `--base-branch`, `--codex-command`, `--max-concurrent-agents`, and `--max-turns` to the helper when those values need to change.
 
-`wave` respects `agent.max_concurrent_agents` when selecting parallel work. `dashboard` shows the active/max agent count and turn budget. The plugin records `max_turns` as orchestration policy; enforcing actual Codex process termination still depends on the host runner.
+`wave` respects `agent.max_concurrent_agents` when selecting parallel work. `dashboard` shows the active/max agent count and turn budget. The TUI/poller dispatches at most `agent.max_concurrent_agents` active issue lanes and passes `agent.max_turns` to each Codex lane as its per-issue turn budget.
 
 When goal mode is on, the skill should bypass routine "continue?" prompts after startup authority is recorded. It should keep progressing until the goal is complete, blocked by missing credentials, or blocked by out-of-scope/destructive action.
 
-For Linear setup, `LINEAR_API_KEY` is enough for `sync-linear --apply` in the common case. If `LINEAR_TEAM_ID` is missing, the helper uses the first team visible to the API key. If `LINEAR_PROJECT_URL` is missing, the helper creates a Linear project for the workflow and uses that project id/url for issue registration.
+For Linear setup, `LINEAR_API_KEY` is enough for `sync-linear --apply` in the common case. If `LINEAR_TEAM_ID` is missing, the helper uses the first team visible to the API key. If `LINEAR_PROJECT_URL` is missing, the helper creates a Linear project for the workflow and uses that project id/url for issue registration. Before issue registration, the helper ensures the Linear team has the issue workflow states `Backlog, Todo, In Progress, Review, Merging, Canceled, Duplicate`; pass `--linear-statuses "Backlog, Ready, Building, Review, Done"` or answer the fifth startup question to customize them.
 
 For Symphony-style unattended execution, run `tui WORKFLOW.md` for the combined dashboard + polling terminal TUI, `poll WORKFLOW.md` for one dispatch tick, or `daemon WORKFLOW.md` for a JSON continuous loop. The poller reads Linear issues from `tracker.project_slug`, moves eligible Todo issues to In Progress, prepares `workspace.root/<issue>`, runs configured hooks, updates the single `## Codex Workpad`, and executes `codex.command` in that issue workspace. It dispatches up to `agent.max_concurrent_agents` issues concurrently and exposes `agent.max_turns` to the lane command as `SYMPHONY_MAX_TURNS`/`LWO_MAX_TURNS`. Generated workflows default to `codex.command: codex app-server`; the poller starts a local app-server control plane, records it in `.lwo/app-server.json`, and drives issue turns through that server. Use an explicit `codex exec ...` command only for the older standalone exec runner. This is the mode to use when Linear should drive development instead of acting as a passive mirror.
 
@@ -112,6 +112,7 @@ At the start of a workflow, the skill should ask:
 - whether Linear credentials are exported, stored in an env file, or supplied by the user
 - whether goal mode is on
 - what `max_concurrent_agents` and `max_turns` should be
+- whether to use the default Linear issue workflow states or a custom comma-separated status list
 
 These questions are a hard startup gate. The skill should ask them before inspecting the target repository, creating `workflow.md`, or deciding that the project is local-only.
 

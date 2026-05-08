@@ -21,7 +21,7 @@ Goal mode bypass: when goal mode is on and the user has granted GitHub/Linear au
 
 ## Startup Questions
 
-Hard gate: ask these four questions before repository inspection, creating `workflow.md`, running `git`, running implementation commands, or doing external writes. Do not infer or auto-select the answers from the current directory, environment, or perceived user intent. If the user supplied one answer inline, ask only for the missing answers.
+Hard gate: ask these five questions before repository inspection, creating `workflow.md`, running `git`, running implementation commands, or doing external writes. Do not infer or auto-select the answers from the current directory, environment, or perceived user intent. If the user supplied one answer inline, ask only for the missing answers.
 
 1. Execution workspace:
    - GitHub issue branch flow: create one branch per Linear issue and push each branch/PR.
@@ -36,23 +36,27 @@ Hard gate: ask these four questions before repository inspection, creating `work
 4. Agent limits:
    - `max_concurrent_agents`: maximum Linear issues the terminal TUI may dispatch at once
    - `max_turns`: per-issue Codex lane turn budget passed to the runner
+5. Linear issue workflow states for the project:
+   - default: `Backlog, Todo, In Progress, Review, Merging, Canceled, Duplicate`
+   - custom: comma-separated status names to ensure on the Linear team before project issue registration
 
 The first assistant response for a new `$linear-workflow-orchestrator` request must be only the startup-question prompt plus a short statement that no workflow work will start until those answers are recorded. Do not say that goal mode is off, Linear is local-only, or GitHub is unavailable unless the user explicitly answered that way.
 
 Required Korean prompt shape:
 
 ```text
-시작 전에 4가지만 정하겠습니다.
+시작 전에 5가지만 정하겠습니다.
 
 1. 실행 방식: GitHub issue branch / local worktree 중 무엇으로 할까요?
 2. Linear 인증: 이미 export됨 / env 파일 경로 제공 / 지금 입력 중 무엇인가요?
 3. goal mode: on / off 중 무엇으로 할까요?
 4. agent limit: max_concurrent_agents와 max_turns를 몇으로 할까요? 예: 10 agents / 20 turns
+5. Linear issue status: 기본값은 Backlog, Todo, In Progress, Review, Merging, Canceled, Duplicate 입니다. 원하는 단계가 있으면 쉼표로 적어주세요. 없으면 기본값으로 진행할까요?
 
-이 4가지 답이 기록되기 전에는 workflow 생성, repo 검사, git 명령, Linear 등록을 시작하지 않습니다.
+이 5가지 답이 기록되기 전에는 workflow 생성, repo 검사, git 명령, Linear 등록을 시작하지 않습니다.
 ```
 
-Do not omit question 4. If a response contains only three numbered startup questions, immediately correct it before doing any workflow work.
+Do not omit question 5. If a response contains only four numbered startup questions, immediately correct it before doing any workflow work.
 
 ## Required User Inputs
 
@@ -72,7 +76,7 @@ If only `LINEAR_API_KEY` is present and Linear writes are authorized, do not sto
 
 ## Default Status Model
 
-Every workflow starts with these statuses unless the user asks to add more:
+Every workflow starts with these workflow statuses unless the user asks to add more:
 
 | Status | Meaning |
 | --- | --- |
@@ -86,17 +90,25 @@ Every workflow starts with these statuses unless the user asks to add more:
 | Canceled | Work explicitly canceled by the user or made obsolete by scope changes. |
 | Duplicate | Work excluded because another issue already covers it. |
 
+When creating or resolving a Linear project, the default issue workflow states to ensure on the Linear team are:
+
+```text
+Backlog, Todo, In Progress, Review, Merging, Canceled, Duplicate
+```
+
+If the user answers question 5 with a custom comma-separated list, pass it through `--linear-statuses` so the helper creates any missing team workflow states before project issue registration.
+
 ## Workflow
 
 Goal-mode execution has two surfaces:
 
-- Codex CLI: asks the four startup questions, creates `WORKFLOW.md`, registers Linear backlog/project once, and handles user-facing review decisions.
+- Codex CLI: asks the five startup questions, creates `WORKFLOW.md`, registers Linear backlog/project once, and handles user-facing review decisions.
 - Terminal TUI: owns the Linear execution queue after bootstrap. It claims Todo issues, moves them to In Progress, runs lanes up to `agent.max_concurrent_agents`, updates workpads, and keeps the dashboard visible.
 
-When the user explicitly asks for goal-mode automation and the four startup answers are already provided or recorded, use the helper's `goal` command instead of manual `init` + `record-preflight` + `sync-linear` plumbing:
+When the user explicitly asks for goal-mode automation and the five startup answers are already provided or recorded, use the helper's `goal` command instead of manual `init` + `record-preflight` + `sync-linear` plumbing:
 
 ```bash
-node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs goal "Build a Codex plugin" --apply --open-tui --repo-url https://github.com/OWNER/REPO.git --base-branch main --max-concurrent-agents 10 --max-turns 20
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs goal "Build a Codex plugin" --apply --open-tui --repo-url https://github.com/OWNER/REPO.git --base-branch main --max-concurrent-agents 10 --max-turns 20 --linear-statuses "Backlog, Todo, In Progress, Review, Merging, Canceled, Duplicate"
 ```
 
 This command creates `WORKFLOW.md`, records startup answers, resolves or creates the Linear project from `LINEAR_API_KEY`, registers backlog issues, promotes dependency-ready work to Todo, writes a private runtime env file when needed, and opens the terminal TUI. If the host blocks opening a GUI terminal, instruct the user to run the terminal TUI:
@@ -114,7 +126,7 @@ Do not replace the TUI with repeated Codex-side `set-status ... --apply-linear` 
 3. Record startup answers before creating Linear issues or starting work:
 
 ```bash
-node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs record-preflight workflow.md --workspace github --credentials exported --goal-mode off --max-concurrent-agents 10 --max-turns 20
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs record-preflight workflow.md --workspace github --credentials exported --goal-mode off --max-concurrent-agents 10 --max-turns 20 --linear-statuses "Backlog, Todo, In Progress, Review, Merging, Canceled, Duplicate"
 ```
 
 4. Include:
@@ -216,11 +228,11 @@ node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.m
 The helper script can initialize a deterministic workflow template and parse/sync existing `workflow.md` files:
 
 ```bash
-node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs goal "Build a Codex plugin" --apply --open-tui --repo-url https://github.com/OWNER/REPO.git --base-branch main --max-concurrent-agents 10 --max-turns 20
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs goal "Build a Codex plugin" --apply --open-tui --repo-url https://github.com/OWNER/REPO.git --base-branch main --max-concurrent-agents 10 --max-turns 20 --linear-statuses "Backlog, Todo, In Progress, Review, Merging, Canceled, Duplicate"
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs init "Build a Codex plugin" --goal-mode on --out workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs init "Build a Codex plugin" --goal-mode on --max-concurrent-agents 10 --max-turns 20 --repo-url https://github.com/OWNER/REPO.git --base-branch main --out workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs preflight
-node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs record-preflight workflow.md --workspace github --credentials exported --goal-mode on --max-concurrent-agents 10 --max-turns 20
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs record-preflight workflow.md --workspace github --credentials exported --goal-mode on --max-concurrent-agents 10 --max-turns 20 --linear-statuses "Backlog, Todo, In Progress, Review, Merging, Canceled, Duplicate"
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs resolve-linear workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs parse workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs sync-linear workflow.md --dry-run-out linear-issues.preview.json

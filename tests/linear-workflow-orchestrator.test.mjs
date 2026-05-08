@@ -207,19 +207,20 @@ test("authorization header preserves api key and bearer token", () => {
 test("preflight questions cover workspace credentials and goal mode", () => {
   const questions = preflightQuestions({ LINEAR_API_KEY: "key", LINEAR_TEAM_ID: "team" });
 
-  assert.deepEqual(questions.map((question) => question.id), ["execution_workspace", "linear_credentials", "goal_mode", "agent_limits"]);
+  assert.deepEqual(questions.map((question) => question.id), ["execution_workspace", "linear_credentials", "goal_mode", "agent_limits", "linear_statuses"]);
   assert.equal(questions[1].options[0], "exported");
+  assert.match(questions[4].options[0], /Backlog, Todo, In Progress, Review, Merging, Canceled, Duplicate/);
 });
 
 test("skill requires startup questions before repository work", () => {
   const skill = readFileSync(join(import.meta.dirname, "../plugins/linear-workflow-orchestrator/skills/linear-workflow-orchestrator/SKILL.md"), "utf8");
 
-  assert.match(skill, /Hard gate: ask these four questions before repository inspection/);
+  assert.match(skill, /Hard gate: ask these five questions before repository inspection/);
   assert.match(skill, /Do not infer or auto-select the answers/);
   assert.match(skill, /first assistant response for a new `\$linear-workflow-orchestrator` request must be only the startup-question prompt/);
   assert.match(skill, /Required Korean prompt shape/);
-  assert.match(skill, /4\. agent limit: max_concurrent_agents와 max_turns를 몇으로 할까요\?/);
-  assert.match(skill, /Do not omit question 4/);
+  assert.match(skill, /5\. Linear issue status:/);
+  assert.match(skill, /Do not omit question 5/);
 });
 
 test("record-preflight stores startup agent limits", async () => {
@@ -246,10 +247,13 @@ test("record-preflight stores startup agent limits", async () => {
       "10",
       "--max-turns",
       "20",
+      "--linear-statuses",
+      "Backlog, Ready, Building, Review, Done",
     ]);
     const workflow = readFileSync(workflowPath, "utf8");
     assert.match(workflow, /Max concurrent agents: 10/);
     assert.match(workflow, /Max turns: 20/);
+    assert.match(workflow, /Linear statuses: Backlog, Ready, Building, Review, Done/);
   } finally {
     console.log = originalLog;
     rmSync(tempDir, { recursive: true, force: true });
@@ -665,6 +669,13 @@ test("sync-linear apply queries workflow states with Linear ID team variable", a
     const body = JSON.parse(options.body);
     queries.push(body.query);
 
+    if (body.query.includes("WorkflowStateCreate")) {
+      return new Response(
+        JSON.stringify({ data: { workflowStateCreate: { success: true, workflowState: { id: `state-${body.variables.input.name}`, name: body.variables.input.name, type: body.variables.input.type } } } }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
     if (body.query.includes("WorkflowStates")) {
       return new Response(
         JSON.stringify({ data: { workflowStates: { nodes: [{ id: "state-123", name: "Backlog" }] } } }),
@@ -759,6 +770,12 @@ test("sync-linear apply resolves team and creates project from api key only", as
       assert.equal(body.variables.input.teamIds[0], "team-auto");
       return new Response(
         JSON.stringify({ data: { projectCreate: { success: true, project: { id: "project-auto", name: "Build bookmark CLI", url: "https://linear.app/acme/project/build-bookmark-cli-abc123", slugId: "abc123" } } } }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (body.query.includes("WorkflowStateCreate")) {
+      return new Response(
+        JSON.stringify({ data: { workflowStateCreate: { success: true, workflowState: { id: `state-${body.variables.input.name}`, name: body.variables.input.name, type: body.variables.input.type } } } }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
     }
@@ -1028,6 +1045,9 @@ test("goal command creates workflow, applies Linear, promotes ready issue, and p
     }
     if (body.query.includes("ProjectCreate")) {
       return new Response(JSON.stringify({ data: { projectCreate: { success: true, project: { id: "project-1", name: "Goal", url: "https://linear.app/acme/project/goal-abc123", slugId: "abc123" } } } }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (body.query.includes("WorkflowStateCreate")) {
+      return new Response(JSON.stringify({ data: { workflowStateCreate: { success: true, workflowState: { id: `state-${body.variables.input.name}`, name: body.variables.input.name, type: body.variables.input.type } } } }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     if (body.query.includes("WorkflowStates")) {
       return new Response(JSON.stringify({ data: { workflowStates: { nodes: [{ id: "state-backlog", name: "Backlog" }, { id: "state-todo", name: "Todo" }, { id: "state-progress", name: "In Progress" }] } } }), { status: 200, headers: { "Content-Type": "application/json" } });

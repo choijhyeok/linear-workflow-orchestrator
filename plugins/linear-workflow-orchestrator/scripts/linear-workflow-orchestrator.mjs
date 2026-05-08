@@ -27,6 +27,7 @@ export const ACTIVE_STATUS_PRIORITY = [
   "Backlog",
 ];
 const ACTIVE_EXECUTION_STATUSES = new Set(["todo", "in progress", "rework", "review", "merging"]);
+const DEFAULT_LINEAR_PROJECT_STATUSES = ["Backlog", "Todo", "In Progress", "Review", "Merging", "Canceled", "Duplicate"];
 const TERMINAL_STATUSES = new Set(["done", "canceled", "duplicate"]);
 export const WORKPAD_HEADER = "## Codex Workpad";
 
@@ -599,7 +600,7 @@ export function parseStartupAnswers(markdown) {
 
 export function startupAnswersComplete(markdown) {
   const answers = parseStartupAnswers(markdown);
-  return ["execution_workspace", "linear_credentials", "goal_mode", "max_concurrent_agents", "max_turns"].every((key) => answers[key] && answers[key] !== "pending");
+  return ["execution_workspace", "linear_credentials", "goal_mode", "max_concurrent_agents", "max_turns", "linear_statuses"].every((key) => answers[key] && answers[key] !== "pending");
 }
 
 export function updateStartupAnswers(markdown, answers) {
@@ -609,6 +610,7 @@ export function updateStartupAnswers(markdown, answers) {
     `- Goal mode: ${answers.goalMode}`,
     `- Max concurrent agents: ${answers.maxConcurrentAgents ?? parseWorkflowConfig(markdown).agent.max_concurrent_agents}`,
     `- Max turns: ${answers.maxTurns ?? parseWorkflowConfig(markdown).agent.max_turns}`,
+    `- Linear statuses: ${answers.linearStatuses ?? DEFAULT_LINEAR_PROJECT_STATUSES.join(", ")}`,
   ];
   if (!markdown.includes("## Startup Answers")) {
     return markdown.replace(/\n## Authority Checklist\n/, `\n## Startup Answers\n\n${rows.join("\n")}\n\n## Authority Checklist\n`);
@@ -848,6 +850,80 @@ function workflowTitle(markdown) {
   return markdown.match(/^# Workflow:\s*(.+)$/m)?.[1]?.trim() || "Codex workflow";
 }
 
+function parseLinearStatusList(value) {
+  const source = String(value ?? "").trim();
+  if (!source) return DEFAULT_LINEAR_PROJECT_STATUSES;
+  return source.split(",").map((status) => status.trim()).filter(Boolean);
+}
+
+function linearStatusOptions(options = {}) {
+  const raw = options["linear-statuses"] ?? options.statuses ?? process.env.LINEAR_WORKFLOW_STATUSES;
+  return parseLinearStatusList(raw);
+}
+
+function workflowStateTypeForStatus(name) {
+  const normalized = String(name ?? "").toLowerCase();
+  if (normalized === "backlog") return "backlog";
+  if (["todo", "to do", "ready"].includes(normalized)) return "unstarted";
+  if (["done", "complete", "completed"].includes(normalized)) return "completed";
+  if (["canceled", "cancelled", "duplicate"].includes(normalized)) return "canceled";
+  return "started";
+}
+
+function workflowStateColorForStatus(name) {
+  const normalized = String(name ?? "").toLowerCase();
+  if (normalized === "backlog") return "#8A8F98";
+  if (["todo", "to do", "ready"].includes(normalized)) return "#F2C94C";
+  if (["review", "merging"].includes(normalized)) return "#8B5CF6";
+  if (["done", "complete", "completed"].includes(normalized)) return "#4CB782";
+  if (["canceled", "cancelled", "duplicate"].includes(normalized)) return "#D04444";
+  return "#5E6AD2";
+}
+
+async function workflowStates(apiKey, teamId) {
+  const query = `
+    query WorkflowStates($teamId: ID!) {
+      workflowStates(filter: { team: { id: { eq: $teamId } } }) {
+        nodes { id name type }
+      }
+    }
+  `;
+  const data = await graphql(apiKey, query, { teamId });
+  return data.workflowStates.nodes;
+}
+
+async function ensureWorkflowStates(apiKey, teamId, statusNames) {
+  const names = parseLinearStatusList(statusNames);
+  if (!teamId || !names.length) return [];
+  const existing = await workflowStates(apiKey, teamId);
+  const existingNames = new Set(existing.map((state) => state.name.toLowerCase()));
+  const missing = names.filter((name) => !existingNames.has(name.toLowerCase()));
+  if (!missing.length) return { existing, created: [] };
+  const mutation = `
+    mutation WorkflowStateCreate($input: WorkflowStateCreateInput!) {
+      workflowStateCreate(input: $input) {
+        success
+        workflowState { id name type }
+      }
+    }
+  `;
+  const created = [];
+  for (const [index, name] of missing.entries()) {
+    const data = await graphql(apiKey, mutation, {
+      input: {
+        color: workflowStateColorForStatus(name),
+        name,
+        position: existing.length + index,
+        teamId,
+        type: workflowStateTypeForStatus(name),
+      },
+    });
+    if (!data.workflowStateCreate.success) throw new Error(`Linear workflowStateCreate did not succeed for ${name}`);
+    created.push(data.workflowStateCreate.workflowState);
+  }
+  return { existing, created };
+}
+
 async function createLinearProject(apiKey, teamId, markdown, options = {}) {
   const name = options["project-name"] ?? workflowTitle(markdown);
   const mutation = `
@@ -877,6 +953,7 @@ async function resolveLinearContext(apiKey, workflowMarkdown, options = {}) {
     if (!team) throw new Error("No Linear teams are visible to this API key.");
     teamId = team.id;
   }
+  const workflowStateResult = await ensureWorkflowStates(apiKey, teamId, linearStatusOptions(options));
 
   let projectUrl = options["project-url"] ?? process.env.LINEAR_PROJECT_URL;
   let projectId = projectIdFromUrl(projectUrl);
@@ -890,7 +967,7 @@ async function resolveLinearContext(apiKey, workflowMarkdown, options = {}) {
     projectUrl = project.url;
   }
 
-  return { teamId, team, projectId, projectUrl, project };
+  return { teamId, team, projectId, projectUrl, project, workflowStates: workflowStateResult };
 }
 
 async function createLinearIssues(apiKey, issueInputs) {
@@ -1286,6 +1363,7 @@ async function runAppServerTurn(command, cwd, prompt, env, options = {}) {
     backend: "codex-app-server",
     command,
     appServerPid: server.pid,
+    maxTurns: options.maxTurns ?? null,
     wsUrl: server.wsUrl,
     logPath,
     event: "app-server turn running",
@@ -1334,6 +1412,7 @@ async function runAppServerTurn(command, cwd, prompt, env, options = {}) {
         appServerPid: server.pid,
         threadId,
         turnId: completed.id,
+        maxTurns: options.maxTurns ?? null,
         logPath,
         event: `app-server turn ${completed.status}`,
       };
@@ -1390,6 +1469,7 @@ async function runAgentCommand(command, cwd, prompt, env, options = {}) {
         LWO_ISSUE_PROMPT: prompt,
         SYMPHONY_MAX_TURNS: String(options.maxTurns ?? ""),
         LWO_MAX_TURNS: String(options.maxTurns ?? ""),
+        CODEX_MAX_TURNS: String(options.maxTurns ?? ""),
       },
     });
     const started = {
@@ -1744,6 +1824,11 @@ export function preflightQuestions(env = process.env) {
       question: "Set max_concurrent_agents and max_turns.",
       options: ["3 agents / 20 turns", "10 agents / 20 turns", "custom"],
     },
+    {
+      id: "linear_statuses",
+      question: "Use the default Linear project statuses or provide custom statuses?",
+      options: [DEFAULT_LINEAR_PROJECT_STATUSES.join(", "), "custom"],
+    },
   ];
 }
 
@@ -1769,6 +1854,7 @@ export async function run(argv) {
       goalMode: "on",
       maxConcurrentAgents: options["max-concurrent-agents"] ?? 3,
       maxTurns: options["max-turns"] ?? 20,
+      linearStatuses: options["linear-statuses"] ?? DEFAULT_LINEAR_PROJECT_STATUSES.join(", "),
     }), "utf8");
     const result = { workflow, goal, mode: "goal", linear: null, promoted: [], poll: null };
     if (options.apply || process.env.LINEAR_API_KEY) {
@@ -1820,15 +1906,16 @@ export async function run(argv) {
     const goalMode = requireValue(options["goal-mode"], "--goal-mode is required");
     const maxConcurrentAgents = Number(options["max-concurrent-agents"] ?? parseWorkflowConfig(fs.readFileSync(workflow, "utf8")).agent.max_concurrent_agents);
     const maxTurns = Number(options["max-turns"] ?? parseWorkflowConfig(fs.readFileSync(workflow, "utf8")).agent.max_turns);
+    const linearStatuses = options["linear-statuses"] ?? DEFAULT_LINEAR_PROJECT_STATUSES.join(", ");
     if (!["github", "worktree"].includes(workspace)) throw new Error("--workspace must be github or worktree");
     if (!["exported", "env-file", "user-input"].includes(credentials)) throw new Error("--credentials must be exported, env-file, or user-input");
     parseBool(goalMode);
     if (!Number.isInteger(maxConcurrentAgents) || maxConcurrentAgents < 1) throw new Error("--max-concurrent-agents must be a positive integer");
     if (!Number.isInteger(maxTurns) || maxTurns < 1) throw new Error("--max-turns must be a positive integer");
-    let updated = updateStartupAnswers(fs.readFileSync(workflow, "utf8"), { workspace, credentials, goalMode, maxConcurrentAgents, maxTurns });
+    let updated = updateStartupAnswers(fs.readFileSync(workflow, "utf8"), { workspace, credentials, goalMode, maxConcurrentAgents, maxTurns, linearStatuses });
     updated = updateWorkflowAgentConfig(updated, { maxConcurrentAgents, maxTurns });
     fs.writeFileSync(workflow, updated, "utf8");
-    console.log(JSON.stringify({ workflow, workspace, credentials, goalMode, maxConcurrentAgents, maxTurns }, null, 2));
+    console.log(JSON.stringify({ workflow, workspace, credentials, goalMode, maxConcurrentAgents, maxTurns, linearStatuses }, null, 2));
     return;
   }
   if (command === "sync-linear") {

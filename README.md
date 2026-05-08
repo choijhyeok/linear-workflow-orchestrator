@@ -4,7 +4,7 @@ Codex plugin prototype for turning a development goal into a `workflow.md`, crea
 
 The intended workflow is not "create Linear issues after the work is already done." It is:
 
-1. Ask startup questions for GitHub branch vs local worktree, Linear credential source, and goal mode before inspecting or editing the target project.
+1. Ask startup questions for GitHub branch vs local worktree, Linear credential source, goal mode, agent limits, and Linear issue workflow states before inspecting or editing the target project.
 2. Register all discovered tasks as Linear Backlog issues.
 3. Move only dependency-ready issues into Todo/In Progress.
 4. Create or reuse one Linear `## Codex Workpad` comment per active issue and record plan, progress, validation, PR links, review findings, and handoff notes there.
@@ -25,7 +25,7 @@ The plugin skill asks for GitHub authority, Linear authority, and Linear credent
 
 ## Default Statuses
 
-Backlog, Todo, In Progress, Rework, Review, Merging, Done, Canceled, and Duplicate are built into every workflow. Users can add extra statuses when needed.
+Backlog, Todo, In Progress, Rework, Review, Merging, Done, Canceled, and Duplicate are built into every workflow. For Linear issue workflow states, the helper defaults to Backlog, Todo, In Progress, Review, Merging, Canceled, and Duplicate; pass `--linear-statuses` or answer the fifth startup question to customize the team states used by project issues.
 
 ## Local CLI
 
@@ -34,7 +34,7 @@ node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.m
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs init "Build my feature" --goal-mode on --out workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs init "Build my feature" --goal-mode on --max-concurrent-agents 10 --max-turns 20 --out workflow.md
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs preflight
-node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs record-preflight workflow.md --workspace github --credentials exported --goal-mode on --max-concurrent-agents 10 --max-turns 20
+node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs record-preflight workflow.md --workspace github --credentials exported --goal-mode on --max-concurrent-agents 10 --max-turns 20 --linear-statuses "Backlog, Todo, In Progress, Review, Merging, Canceled, Duplicate"
 node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs parse workflow.md
 LINEAR_TEAM_ID=team-id node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs sync-linear workflow.md --dry-run-out linear-issues.preview.json
 LINEAR_API_KEY=... LINEAR_TEAM_ID=... node plugins/linear-workflow-orchestrator/scripts/linear-workflow-orchestrator.mjs sync-linear workflow.md --apply
